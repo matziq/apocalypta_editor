@@ -1,0 +1,11 @@
+{
+  "name": "apocalypter-save-editor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Offline, lossless editor for verified Apocalypter ES3 save fields",
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check save-format.js && node --check app.js"
+  },
+  "engines": { "node": ">=18" }
+}

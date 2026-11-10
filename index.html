@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<!--
+THESIS: A save workbench that makes the original and the proposed changes explicit.
+OWN-WORLD: Daylight-neutral canvas, forest-green actions, system UI type and ruled rows.
+STORY: Open an existing save, edit verified fields, review, export a separate copy.
+FIRST VIEWPORT: Safety and opening controls on the left; file state and fields on the right.
+FORM: Familiar desktop utility, with an in-place before/after review instead of a modal.
+-->
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Apocalypter Save Editor</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="save-format.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header>
+    <div><h1>Apocalypter <span>Save Editor</span></h1><p>A careful tune-up before the next expedition.</p></div>
+    <span class="local">Offline &middot; stays on your device</span>
+  </header>
+  <main>
+    <aside aria-label="File and safety controls">
+      <h2>Start with a save</h2>
+      <p>Close the game first. Open a game slot or settings file; the original is never overwritten.</p>
+      <label for="file">Open .es3 file</label>
+      <input id="file" type="file" accept=".es3">
+      <p class="path">Windows save folder<br><code>%USERPROFILE%\AppData\LocalLow\SawyerK Games\Apocalypter</code></p>
+      <hr>
+      <h2>Save safely</h2>
+      <p>Download an original backup, review your changes, then export an edited copy. Replace the matching save manually only after making a backup.</p>
+      <button id="backup" disabled>Download original backup</button>
+      <button id="reset" disabled>Reset all changes</button>
+      <p class="note">Only verified fields appear. Object references, inventory instances, and unknown data stay untouched.</p>
+    </aside>
+    <section class="workspace" aria-label="Save workspace">
+      <div class="workspace-heading"><div><h2 id="filename">No save open</h2><p id="details">Choose a file to see its editable values.</p></div><span id="dirty"></span></div>
+      <p id="message" role="status" aria-live="polite"></p>
+      <div id="empty"><h3>Your next run, on your terms.</h3><p>Edit health, supplies, or gameplay settings using the values already in your save. Nothing is uploaded, installed, or written to the game folder.</p><p>Supports the inspected text-based ES3 / PlayMaker format. Encrypted or incompatible saves are rejected.</p></div>
+      <form id="fields" hidden novalidate></form>
+      <section id="review" hidden aria-label="Change review"><h3>Review changes</h3><ul id="changes"></ul></section>
+      <footer><p id="save-hint">Open a save to begin.</p><button id="export" disabled>Export edited copy</button></footer>
+    </section>
+  </main>
+</body>
+</html>

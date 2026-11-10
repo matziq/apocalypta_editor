@@ -1,0 +1,58 @@
+:root { font-family: "Segoe UI", system-ui, sans-serif; color: #242d27; background: #f2f1e9; --accent: #285d43; --line: #c9cfc5; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+header { padding: 38px 5vw 30px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+h1 { margin: 0; font-size: clamp(24px, 3vw, 36px); letter-spacing: -.025em; font-weight: 700; }
+h1 span { font-weight: 400; }
+p { line-height: 1.65; max-width: 70ch; }
+header p { margin: 8px 0 0; color: #4f5c50; }
+.local { font-size: 13px; white-space: nowrap; color: #285d43; }
+main { display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); min-height: calc(100vh - 150px); }
+aside { padding: 32px 26px 40px clamp(24px, 4vw, 60px); border-right: 1px solid var(--line); }
+h2 { font-size: 19px; margin: 0 0 12px; }
+aside p { font-size: 14px; color: #4f5c50; }
+button { font: inherit; border: 1px solid var(--accent); border-radius: 4px; background: var(--accent); color: white; padding: 11px 16px; cursor: pointer; display: inline-block; text-align: center; }
+button:hover:not(:disabled) { background: #18492f; }
+button:disabled { background: #dce0d7; color: #566153; border-color: #b6bfb2; cursor: not-allowed; }
+button:focus-visible, input:focus-visible { outline: 3px solid #a34a15; outline-offset: 3px; }
+aside button { width: 100%; background: transparent; color: var(--accent); margin: 6px 0; font-size: 13px; }
+aside button:hover:not(:disabled) { color: white; }
+#file { width: 100%; font-size: 12px; margin-top: 12px; }
+input::file-selector-button { padding: 10px 12px; background: var(--accent); color: white; border: 0; border-radius: 3px; cursor: pointer; }
+.path { margin-top: 24px; font-size: 12px; }
+code { overflow-wrap: anywhere; font-size: 12px; }
+hr { border: 0; border-top: 1px solid var(--line); margin: 28px 0; }
+.note { font-size: 12px; margin-top: 22px; }
+.workspace { padding: 32px clamp(20px, 4vw, 60px); min-width: 0; background: #fafbf6; }
+.workspace-heading { display: flex; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--line); }
+.workspace-heading h2 { overflow-wrap: anywhere; }
+.workspace-heading p, #dirty { color: #4f5c50; font-size: 13px; }
+#dirty { white-space: nowrap; }
+#message { color: #91401c; font-weight: 600; }
+#message:empty { display: none; }
+#empty { padding: 55px 0; max-width: 640px; }
+h3 { font-size: 23px; margin: 0 0 12px; }
+#empty p { color: #4f5c50; }
+fieldset { margin: 28px 0; border: 0; padding: 0; min-width: 0; }
+legend { font-size: 17px; font-weight: 650; margin-bottom: 10px; padding: 0; }
+.field { display: grid; grid-template-columns: minmax(0, 1fr) 150px; align-items: center; gap: 24px; border-bottom: 1px solid #e0e4da; padding: 12px 0; }
+.field label { overflow-wrap: anywhere; }
+.field small { display: block; color: #52614f; font-size: 12px; margin-top: 4px; }
+input[type=number] { width: 100%; padding: 9px 10px; border: 1px solid #8a9985; border-radius: 3px; background: white; color: #242d27; font: inherit; }
+input[type=checkbox] { width: 21px; height: 21px; justify-self: end; accent-color: var(--accent); }
+[aria-invalid=true] { border-color: #91401c !important; outline: 2px solid #91401c; }
+#review { border-top: 1px solid var(--line); padding: 24px 0; }
+#review h3 { font-size: 18px; }
+#changes { padding-left: 20px; font-size: 14px; line-height: 1.9; }
+footer { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding-top: 24px; border-top: 1px solid var(--line); }
+footer p { font-size: 13px; color: #4f5c50; }
+@media (max-width: 760px) {
+  header { align-items: start; flex-direction: column; padding: 24px; gap: 12px; }
+  main { grid-template-columns: 1fr; }
+  aside { padding: 24px; border-right: 0; border-bottom: 1px solid var(--line); }
+  aside hr, aside .note { display: none; }
+  aside button { width: auto; }
+  .field { grid-template-columns: minmax(0, 1fr) 110px; gap: 12px; }
+  footer, .workspace-heading { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: no-preference) { button { transition: background-color 140ms ease-out; } }
