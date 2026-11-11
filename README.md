@@ -1,11 +1,13 @@
 # Apocalypter Save Editor
 
-A dependency-free, offline editor for the **actual text-based Easy Save 3 / ES3PlayMaker format** used by Apocalypter. Open `index.html` in a current desktop browser. No installation, server, account, upload, or build step is required.
+A dependency-free, offline editor for the **actual text-based Easy Save 3 / ES3PlayMaker format** used by Apocalypter. Double-click `run.bat` on Windows to open `index.html` in your default browser, or open `index.html` directly in a current desktop browser. No installation, server, account, upload, or build step is required.
+
+The local Tools Menu discovers `run.bat` automatically under **Game Editors** as **Apocalypta Editor** (the display name comes from the repository folder). Refresh the menu's tool list if it was already open when the launcher was added. The launcher works from any working directory, including paths containing spaces.
 
 ## Use
 
 1. Close Apocalypter and back up your saves.
-2. Open `index.html`, then choose `SaveGame1.es3` (or another slot) or `SaveSettings.es3`.
+2. Launch **Apocalypta Editor** from the Tools Menu, double-click `run.bat`, or open `index.html`; then choose `SaveGame1.es3` (or another slot) or `SaveSettings.es3`.
 3. Use **Download original backup** to preserve the exact opened bytes.
 4. Edit supported fields and review the before/after list. Invalid values block export.
 5. Choose **Export edited copy**. The browser downloads `SaveGame1.edited.es3` or `SaveSettings.edited.es3`; it never overwrites a file or writes to the game installation.
