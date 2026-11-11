@@ -33,12 +33,29 @@ FORM: Familiar desktop utility, with an in-place before/after review instead of 
       <p>Download an original backup, review your changes, then export an edited copy. Replace the matching save manually only after making a backup.</p>
       <button id="backup" disabled>Download original backup</button>
       <button id="reset" disabled>Reset all changes</button>
-      <p class="note">Only verified fields appear. Object references, inventory instances, and unknown data stay untouched.</p>
+      <p class="note">Only verified values on existing objects can change. Object references and unknown data stay untouched.</p>
     </aside>
     <section class="workspace" aria-label="Save workspace">
       <div class="workspace-heading"><div><h2 id="filename">No save open</h2><p id="details">Choose a file to see its editable values.</p></div><span id="dirty"></span></div>
       <p id="message" role="status" aria-live="polite"></p>
       <div id="empty"><h3>Your next run, on your terms.</h3><p>Edit health, supplies, or gameplay settings using the values already in your save. Nothing is uploaded, installed, or written to the game folder.</p><p>Supports the inspected text-based ES3 / PlayMaker format. Encrypted or incompatible saves are rejected.</p></div>
+      <nav id="sections" role="tablist" aria-label="Save sections" hidden></nav>
+      <section id="items-panel" hidden aria-label="Saved item instances">
+        <h3>Saved item instances</h3>
+        <p id="items-note"></p>
+        <label class="filter-label" for="item-filter">Find an item</label>
+        <input id="item-filter" type="search" placeholder="Filter by item name or location">
+        <div class="table-wrap">
+          <table><thead><tr><th>Saved item</th><th>Location evidence</th><th>Instance</th><th>Saved values</th></tr></thead><tbody id="item-rows"></tbody></table>
+        </div>
+      </section>
+      <section id="vehicles-panel" hidden aria-label="Saved vehicles">
+        <h3>Saved vehicles</h3>
+        <p id="vehicles-note"></p>
+        <div class="table-wrap">
+          <table><thead><tr><th>Saved vehicle</th><th>Fuel tank</th><th>Linked components</th><th>Vehicle record</th></tr></thead><tbody id="vehicle-rows"></tbody></table>
+        </div>
+      </section>
       <form id="fields" hidden novalidate></form>
       <section id="review" hidden aria-label="Change review"><h3>Review changes</h3><ul id="changes"></ul></section>
       <footer><p id="save-hint">Open a save to begin.</p><button id="export" disabled>Export edited copy</button></footer>

@@ -28,6 +28,31 @@
     audio_volume: "Master volume",
     main_menu_music: "Main menu music"
   };
+  const sections = [
+    { id: "player", label: "Player & supplies" },
+    { id: "items", label: "Saved items" },
+    { id: "vehicles", label: "Vehicles" },
+    { id: "settings", label: "Settings" }
+  ];
+  const weaponAmmoLabels = {
+    ammoakms: "AKMS (saved item ID: akms)",
+    ammoakmdrum: "AKM drum",
+    ammoakmtrash: "AKM trash",
+    ammo22pipepistol: "22 pipe pistol",
+    ammo22piperevolver: "22 pipe revolver",
+    ammoborzsmg: "BorZ SMG",
+    ammocrossbow: "Crossbow",
+    ammofolk17: "Folk 17",
+    ammom16a1: "M16A1",
+    ammorochesterm24: "Rochester M24",
+    ammorochesterm24chopped: "Chopped Rochester M24",
+    ammoslamberg500: "Slamberg 500",
+    ammoslamberg500chopped: "Chopped Slamberg 500",
+    ammoslamfireshotgun: "Flare shotgun",
+    ammoredmarkm11: "Redmark M11",
+    ammoredmarkm11scoped: "Scoped Redmark M11",
+    ammo22pipesmg: "22 pipe SMG"
+  };
 
   // ES3PlayMaker writes an unnamed value immediately after its __type string.
   // Retain source spans instead of normalizing this non-JSON extension.
@@ -131,34 +156,256 @@
   function inspect(text) {
     const tree = parse(text);
     const fields = [];
-    function add(id, label, group, node, type, min, max) {
-      if (!node) return;
+    const items = [];
+    const vehicles = [];
+    function add(id, label, group, node, type, min, max, section, description) {
+      if (!node) return null;
       const declared = at(node, "__type");
       const scalar = node.implicit || at(node, "value");
       if (node.implicit && at(node, "value")) throw new Error(`Ambiguous value for ${id}.`);
       if (declared?.value !== type || !scalar || scalar.kind !== (type === "bool" ? "boolean" : "number")) {
         throw new Error(`Unsupported structure for ${id}; this save version cannot be edited safely.`);
       }
-      const field = { id, label, group, type, min, max, value: scalar.value, start: scalar.start, end: scalar.end };
+      const field = { id, label, group, type, min, max, section, description, value: scalar.value, start: scalar.start, end: scalar.end };
       validate(field, scalar.value);
       fields.push(field);
+      return field;
     }
     const player = at(tree, "Player");
     const ammo = at(tree, "Ammo");
     if (player && at(player, "__type")?.value === wrapper) {
-      add("Player.Health", "Health", "Player", at(player, "value", "objs", "Health"), "float", 0, 100);
+      add("Player.Health", "Health", "Player", at(player, "value", "objs", "Health"), "float", 0, 100, "player");
     }
     if (ammo && at(ammo, "__type")?.value === wrapper) {
-      add("Ammo.armor", "Armor", "Supplies", at(ammo, "value", "objs", "armor"), "float", 0, 100);
+      add("Ammo.armor", "Armor", "Supplies", at(ammo, "value", "objs", "armor"), "float", 0, 100, "player");
       for (const name of ammoNames) {
-        add(`Ammo.${name}`, name.replace(/^ammo_/, "").replaceAll("_", " "), "Supplies", at(ammo, "value", "objs", name), "int", 0, 2147483647);
+        add(`Ammo.${name}`, name.replace(/^ammo_/, "").replaceAll("_", " "), "Supplies", at(ammo, "value", "objs", name), "int", 0, 2147483647, "player");
       }
     }
-    for (const [name, label] of Object.entries(switches)) add(name, label, "Gameplay settings", at(tree, name), "bool");
-    for (const [name, label] of Object.entries(volumes)) add(name, label, "Audio settings", at(tree, name), "float", 0, 1);
-    add("FOV", "Field of view", "Display settings", at(tree, "FOV"), "float", 30, 120);
+    for (const [name, label] of Object.entries(switches)) add(name, label, "Gameplay settings", at(tree, name), "bool", undefined, undefined, "settings");
+    for (const [name, label] of Object.entries(volumes)) add(name, label, "Audio settings", at(tree, name), "float", 0, 1, "settings");
+    add("FOV", "Field of view", "Display settings", at(tree, "FOV"), "float", 30, 120, "settings");
+
+    function props(node) { return node?.kind === "object" ? node.props : new Map(); }
+    function scalar(node) {
+      if (!node) return undefined;
+      if (node.implicit) return node.implicit.value;
+      if (node.value !== undefined) return node.value;
+      return undefined;
+    }
+    function numericValue(node, expectedType, context) {
+      if (!node) return { error: "Not present in this save." };
+      const declared = at(node, "__type");
+      const valueNode = node.implicit || at(node, "value");
+      if (declared?.value !== expectedType || !valueNode || valueNode.kind !== "number") {
+        return { error: `Unsupported ${expectedType} field in ${context}; shown read-only.` };
+      }
+      if (!Number.isFinite(valueNode.value)) return { error: `Invalid number in ${context}; shown read-only.` };
+      return { value: valueNode.value, node };
+    }
+    function gameObjects(rootKey) {
+      const array = at(tree, rootKey, "value", "array");
+      if (!array || array.kind === "null") return [];
+      if (array.kind !== "array") throw new Error(`${rootKey} has an unsupported structure.`);
+      return array.items.map((object, index) => {
+        const transform = at(object, "components")?.items?.find(component => at(component, "__type")?.value === "Transform");
+        const parentRef = at(transform, "parent", "_ES3Ref")?.value;
+        const positionNode = at(transform, "localPosition");
+        const position = positionNode ? Object.fromEntries([...props(positionNode)].map(([key, value]) => [key, scalar(value)])) : null;
+        return {
+          index,
+          name: at(object, "name")?.value ?? `Unnamed ${rootKey} object ${index + 1}`,
+          ref: at(object, "_ES3Ref")?.value ?? null,
+          transformId: at(object, "transformID")?.value ?? null,
+          parentRef: typeof parentRef === "string" ? parentRef : null,
+          active: at(object, "active")?.value ?? null,
+          tag: at(object, "tag")?.value ?? null,
+          position,
+          object
+        };
+      });
+    }
+    function wrapperOwner(rootName) {
+      const record = at(tree, rootName);
+      if (at(record, "__type")?.value !== wrapper) return null;
+      const data = at(record, "value", "objs");
+      const owner = at(data, "owner");
+      if (!data || !owner) return null;
+      return { record, data, owner, ref: at(owner, "_ES3Ref")?.value ?? null };
+    }
+    function readableName(name) {
+      return name.replace(/\(Clone\)\d*$/, "");
+    }
+
+    const itemObjects = gameObjects("newGOArray_Items");
+    const carObjects = gameObjects("newGOArray_Cars");
+    const refCounts = new Map();
+    for (const item of itemObjects) {
+      if (item.ref !== null) refCounts.set(item.ref, (refCounts.get(item.ref) || 0) + 1);
+    }
+
+    const carMounts = new Map();
+    const vehicleByRef = new Map();
+    for (const car of carObjects) {
+      const associated = wrapperOwner(car.name);
+      const matched = associated && car.ref && associated.ref === car.ref;
+      const objectRefCount = car.ref ? carObjects.filter(candidate => candidate.ref === car.ref).length : 0;
+      const vehicle = {
+        id: `vehicle:${car.ref ?? car.name}:${car.index}`,
+        name: car.name,
+        ref: car.ref,
+        active: car.active,
+        fuel: null,
+        fieldIds: [],
+        parts: [],
+        warnings: []
+      };
+      if (matched && objectRefCount === 1) {
+        vehicleByRef.set(car.ref, vehicle);
+        for (const [mountKey, mountLabel] of [["hinge_engine", "Engine"], ["hinge_radiator", "Radiator"], ["hinge_exhaust", "Exhaust"]]) {
+          const transformId = at(associated.data, mountKey, "transformID")?.value;
+          if (typeof transformId === "string") {
+            if (!carMounts.has(transformId)) carMounts.set(transformId, []);
+            carMounts.get(transformId).push({ vehicle, mountKey, mountLabel });
+          }
+        }
+        const liquid = numericValue(at(associated.data, "Liquid"), "float", car.name);
+        const capacity = numericValue(at(associated.data, "LiquidCapacity"), "float", car.name);
+        if (liquid.value !== undefined && capacity.value !== undefined && capacity.value > 0 && liquid.value >= 0 && liquid.value <= capacity.value) {
+          const id = `${vehicle.id}:fuel`;
+          const field = add(id, `${car.name} fuel`, "Fuel tank (L)", liquid.node, "float", 0, capacity.value, "vehicles", "Saved Liquid amount; capacity comes from this vehicle's LiquidCapacity field.");
+          if (field) {
+            vehicle.fuel = { value: field.value, capacity: capacity.value, unit: "L" };
+            vehicle.fieldIds.push(field.id);
+          }
+        } else {
+          vehicle.warnings.push(liquid.error || capacity.error || "Fuel amount or saved tank capacity is invalid; fuel is shown read-only.");
+        }
+      } else {
+        vehicle.warnings.push("Vehicle object and saved scalar record could not be uniquely matched by its reference; editable fields are withheld.");
+      }
+      vehicles.push(vehicle);
+    }
+
+    for (const item of itemObjects) {
+      const referenceIsUnique = item.ref !== null && refCounts.get(item.ref) === 1;
+      const associated = referenceIsUnique ? wrapperOwner(item.name) : null;
+      const matched = associated && associated.ref === item.ref;
+      const itemRecord = {
+        id: `item:${item.ref ?? item.name}:${item.index}`,
+        name: item.name,
+        displayName: item.name.startsWith("akms(Clone)") ? `AKMS (saved ID: ${item.name})` : readableName(item.name),
+        ref: item.ref,
+        active: item.active,
+        tag: item.tag,
+        parentRef: item.parentRef,
+        position: item.position,
+        location: item.parentRef === null ? "Unparented / world-root" : "Unresolved parent / container",
+        quantity: null,
+        condition: null,
+        loadedAmmo: null,
+        fieldIds: [],
+        matchedRecord: !!matched,
+        warnings: []
+      };
+      if (item.ref !== null && !referenceIsUnique) {
+        itemRecord.location = "Ambiguous duplicate object reference";
+        itemRecord.warnings.push("Duplicate ES3 reference; scalar data is not attached to either object.");
+      } else if (matched) {
+        const quantity = numericValue(at(associated.data, "Quantity"), "int", item.name);
+        if (quantity.value !== undefined) {
+          if (quantity.value >= 1 && quantity.value <= 2147483647) {
+            const id = `${itemRecord.id}:Quantity`;
+            const field = add(id, `${itemRecord.displayName} quantity`, "Existing item quantities", quantity.node, "int", 1, 2147483647, "items", "Changes this existing stack only; minimum 1 prevents deleting the object.");
+            if (field) {
+              itemRecord.quantity = field.value;
+              itemRecord.fieldIds.push(field.id);
+            }
+          } else itemRecord.warnings.push("Saved quantity is outside the safe editable range (1 to 2,147,483,647); shown read-only.");
+        }
+      } else if (referenceIsUnique) {
+        itemRecord.warnings.push("No uniquely matching typed item record; this existing object is shown read-only.");
+      }
+
+      const partLinks = item.parentRef ? carMounts.get(item.parentRef) || [] : [];
+      const linkedCars = partLinks.filter(link => link.vehicle && link.vehicle.ref && vehicleByRef.get(link.vehicle.ref) === link.vehicle);
+      itemRecord.attachedTo = linkedCars.length === 1 ? `${linkedCars[0].vehicle.name} · ${linkedCars[0].mountLabel}` : null;
+      if (linkedCars.length === 1) {
+        itemRecord.location = `Attached to ${linkedCars[0].vehicle.name} (${linkedCars[0].mountLabel})`;
+        linkedCars[0].vehicle.parts.push(itemRecord);
+      } else if (partLinks.length > 1 || linkedCars.length > 1) {
+        itemRecord.location = "Ambiguous vehicle mount";
+        itemRecord.warnings.push("More than one vehicle mount matches this parent reference; component association is not editable.");
+      }
+
+      if (matched) {
+        const condition = numericValue(at(associated.data, "Condition"), "float", item.name);
+        if (condition.value !== undefined) {
+          if (condition.value >= 0 && condition.value <= 100) {
+            const section = linkedCars.length === 1 ? "vehicles" : "items";
+            const group = linkedCars.length === 1
+              ? `${linkedCars[0].vehicle.name} components`
+              : "Other saved item condition";
+            const description = linkedCars.length === 1
+              ? `Condition scalar on this existing ${linkedCars[0].mountLabel.toLowerCase()} object, attached by its saved parent reference.`
+              : "Condition on this existing item; vehicle or storage association is not established by its saved references.";
+            const id = `${itemRecord.id}:Condition`;
+            const label = `${itemRecord.displayName} condition (%)`;
+            const field = add(id, label, group, condition.node, "float", 0, 100, section, description);
+            if (field) {
+              itemRecord.condition = field.value;
+              itemRecord.fieldIds.push(field.id);
+              if (linkedCars.length === 1) linkedCars[0].vehicle.fieldIds.push(field.id);
+            }
+          } else itemRecord.warnings.push("Condition value is outside the observed 0–100 percent range; shown read-only.");
+        }
+      }
+      items.push(itemRecord);
+    }
+
+    const weaponFields = new Map();
+    const weaponData = at(tree, "weaponsAmmoInGun");
+    if (weaponData && at(weaponData, "__type")?.value === wrapper) {
+      const weaponValues = at(weaponData, "value", "objs");
+      for (const [name, valueNode] of props(weaponValues)) {
+        const parsed = numericValue(valueNode, "int", `weaponsAmmoInGun.${name}`);
+        if (parsed.value === undefined || !Number.isInteger(parsed.value) || parsed.value < 0 || parsed.value > 2147483647) continue;
+        const label = weaponAmmoLabels[name] || `${name} weapon type`;
+        const field = add(
+          `weaponsAmmoInGun.${name}`,
+          `${label} loaded rounds (type-level counter)`,
+          "Ammunition by weapon type",
+          valueNode,
+          "int",
+          0,
+          2147483647,
+          "items",
+          "This existing weaponsAmmoInGun counter is keyed by weapon type, not linked to an individual weapon instance."
+        );
+        if (field) weaponFields.set(name, field);
+      }
+    }
+
+    for (const item of items) {
+      const weaponKey = item.name.match(/^([^(]+)\(Clone\)/)?.[1];
+      const ammoKey = weaponKey ? ({ akms: "ammoakms", akmdrum: "ammoakmdrum", akmtrash: "ammoakmtrash" })[weaponKey] : null;
+      const ammoField = ammoKey && weaponFields.get(ammoKey);
+      if (ammoField) item.loadedAmmo = { fieldId: ammoField.id, value: ammoField.value, scope: "weapon type" };
+      if (item.ref && vehicleByRef.has(item.ref)) item.location = `Vehicle ${vehicleByRef.get(item.ref).name}`;
+    }
+    for (const vehicle of vehicles) {
+      for (const item of items) {
+        if (item.attachedTo?.startsWith(`${vehicle.name} · `) && !vehicle.parts.includes(item)) vehicle.parts.push(item);
+      }
+    }
     if (!fields.length) throw new Error("No supported Apocalypter fields found. Open SaveGameN.es3 or SaveSettings.es3.");
-    return { fields, kind: player ? "Game save" : "Settings", text };
+    const presentSections = sections.filter(section =>
+      section.id === "items" ? items.length > 0 || fields.some(field => field.section === "items") :
+      section.id === "vehicles" ? vehicles.length > 0 || fields.some(field => field.section === "vehicles") :
+      section.id === "player" ? fields.some(field => field.section === "player") :
+      fields.some(field => field.section === section.id)
+    );
+    return { fields, items, vehicles, sections: presentSections, kind: player ? "Game save" : "Settings", text };
   }
 
   function serialize(text, changes) {

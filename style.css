@@ -33,6 +33,25 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 28px 0; }
 #empty { padding: 55px 0; max-width: 640px; }
 h3 { font-size: 23px; margin: 0 0 12px; }
 #empty p { color: #4f5c50; }
+#sections { display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--line); margin-bottom: 24px; }
+#sections button { background: transparent; color: #3d4c40; border: 0; border-radius: 0; padding: 12px 14px 10px; }
+#sections button:hover { background: #e8eee6; color: #1d3828; }
+#sections button[aria-selected=true] { color: #18492f; box-shadow: inset 0 -3px var(--accent); font-weight: 650; }
+#items-panel, #vehicles-panel { padding: 12px 0 24px; }
+#items-panel p, #vehicles-panel p { color: #4f5c50; }
+.filter-label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+#item-filter { max-width: 420px; width: 100%; padding: 9px 10px; border: 1px solid #8a9985; border-radius: 3px; background: white; color: #242d27; font: inherit; margin-bottom: 14px; }
+.table-wrap { width: 100%; overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 650px; font-size: 13px; }
+th { text-align: left; color: #35453a; font-size: 12px; font-weight: 650; background: #eef0e9; }
+td, th { padding: 10px 12px; vertical-align: top; border-bottom: 1px solid #dfe4da; }
+td code { font-size: 11px; }
+td small { display: block; color: #52614f; margin-top: 4px; }
+.location { color: #354d3d; }
+.location.unknown { color: #79430f; }
+.empty-row { color: #4f5c50; padding: 18px 12px; }
+fieldset[data-section] { display: none; }
+fieldset[data-section].visible { display: block; }
 fieldset { margin: 28px 0; border: 0; padding: 0; min-width: 0; }
 legend { font-size: 17px; font-weight: 650; margin-bottom: 10px; padding: 0; }
 .field { display: grid; grid-template-columns: minmax(0, 1fr) 150px; align-items: center; gap: 24px; border-bottom: 1px solid #e0e4da; padding: 12px 0; }
@@ -53,6 +72,9 @@ footer p { font-size: 13px; color: #4f5c50; }
   aside hr, aside .note { display: none; }
   aside button { width: auto; }
   .field { grid-template-columns: minmax(0, 1fr) 110px; gap: 12px; }
+  #sections { gap: 0; }
+  #sections button { padding-inline: 9px; font-size: 13px; }
+  table { min-width: 580px; }
   footer, .workspace-heading { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: no-preference) { button { transition: background-color 140ms ease-out; } }

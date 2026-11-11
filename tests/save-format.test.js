@@ -61,3 +61,141 @@ test("rejects huge and deeply nested inputs", () => {
 test("rejects ambiguous inline plus named scalar values", () => {
   assert.throws(() => inspect(game.replace('"float"1e2', '"float"1e2,"value":90')), /Ambiguous/);
 });
+
+const gameWrapper = "ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass";
+function pm(objs, array = null) {
+  return { __type: gameWrapper, value: { objs, arrays: null, obj: null, array } };
+}
+function gameObject(name, ref, transformId, parentRef = null) {
+  return {
+    __type: "GameObject",
+    _ES3Ref: String(ref),
+    transformID: String(transformId),
+    tag: "Rigidbody",
+    name,
+    active: true,
+    components: [{
+      __type: "Transform",
+      _ES3Ref: String(transformId),
+      goID: String(ref),
+      parent: parentRef === null ? null : { _ES3Ref: String(parentRef) },
+      localPosition: { x: 0, y: 0, z: 0 }
+    }]
+  };
+}
+function itemRecord(name, ref, fields) {
+  return pm({
+    ...fields,
+    owner: { __type: "GameObject", _ES3Ref: String(ref), name }
+  });
+}
+function domainSave({ duplicateItemRef = false } = {}) {
+  const shiv25 = gameObject("shiv(Clone)25", 101, 1001);
+  const shiv55 = gameObject("shiv(Clone)55", 102, 1002);
+  const akms = gameObject("akms(Clone)50", 103, 1003, 99001);
+  const bandage = gameObject("bandage_1(Clone)16", 104, 1004, 99002);
+  const duplicateBandage = gameObject("bandage_1(Clone)17", duplicateItemRef ? 104 : 107, 1007, 99003);
+  const engineName = "594cc I2 23HP 39Nm Gasoline(Clone)3";
+  const engine = gameObject(engineName, 105, 1005, 301);
+  const radiatorName = "radiator_small(Clone)48";
+  const radiator = gameObject(radiatorName, 106, 1006, 302);
+  const carName = "Poloska(Clone)1";
+  const car = gameObject(carName, 200, 2000);
+  const root = {
+    Player: pm({ Health: { __type: "float", value: 100 } }),
+    Ammo: pm({ armor: { __type: "float", value: 0 } }),
+    "shiv(Clone)25": { __type: "System.Object", value: { __type: "int", value: 0 } },
+    "shiv(Clone)55": { __type: "System.Object", value: { __type: "int", value: 0 } },
+    "akms(Clone)50": { __type: "System.Object", value: { __type: "int", value: 0 } },
+    "bandage_1(Clone)16": itemRecord("bandage_1(Clone)16", 104, {
+      Quantity: { __type: "int", value: 2 }
+    }),
+    [engineName]: itemRecord(engineName, 105, {
+      Condition: { __type: "float", value: 74.25 }
+    }),
+    [radiatorName]: itemRecord(radiatorName, 106, {
+      Condition: { __type: "float", value: 47.5 }
+    }),
+    [carName]: itemRecord(carName, 200, {
+      Liquid: { __type: "float", value: 18.5 },
+      LiquidCapacity: { __type: "float", value: 21 },
+      hinge_engine: { __type: "GameObject", _ES3Ref: "3010", transformID: "301" },
+      hinge_radiator: { __type: "GameObject", _ES3Ref: "3020", transformID: "302" },
+      hinge_exhaust: { __type: "GameObject", _ES3Ref: "3030", transformID: "303" }
+    }),
+    weaponsAmmoInGun: pm({
+      ammoakms: { __type: "int", value: 30 }
+    }),
+    newGOArray_Items: pm(null, [shiv25, shiv55, akms, bandage, duplicateBandage, engine, radiator]),
+    newGOArray_Cars: pm(null, [car])
+  };
+  return JSON.stringify(root).replace(
+    /"__type":"(float|int|bool)","value":(true|false|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
+    '"__type":"$1"$2'
+  );
+}
+
+test("lists two shiv instances and an AKMS instance without inventing inventory ownership", () => {
+  const doc = inspect(domainSave());
+  const shivs = doc.items.filter(item => item.name.startsWith("shiv(Clone)"));
+  const akms = doc.items.find(item => item.name === "akms(Clone)50");
+  assert.equal(shivs.length, 2);
+  assert.notEqual(shivs[0].ref, shivs[1].ref);
+  assert.ok(shivs.every(item => item.location === "Unparented / world-root"));
+  assert.equal(akms.location, "Unresolved parent / container");
+  assert.equal(akms.loadedAmmo.scope, "weapon type");
+  assert.equal(akms.loadedAmmo.value, 30);
+  assert.equal(doc.fields.find(field => field.id === "weaponsAmmoInGun.ammoakms").value, 30);
+});
+test("duplicate object references are disambiguated and linked scalar edits are withheld", () => {
+  const doc = inspect(domainSave({ duplicateItemRef: true }));
+  const shivs = doc.items.filter(item => item.name.startsWith("shiv(Clone)"));
+  assert.equal(shivs.length, 2);
+  assert.ok(shivs.every(item => item.location === "Unparented / world-root"));
+  const duplicateBandages = doc.items.filter(item => item.name.startsWith("bandage_1(Clone)"));
+  assert.equal(duplicateBandages.length, 2);
+  assert.ok(duplicateBandages.every(item => item.location === "Ambiguous duplicate object reference"));
+  assert.equal(doc.fields.some(field => field.id.endsWith(":Quantity")), false);
+});
+test("joins vehicle fuel and mounted component condition through exact saved references", () => {
+  const doc = inspect(domainSave());
+  assert.equal(doc.vehicles.length, 1);
+  const vehicle = doc.vehicles[0];
+  assert.equal(vehicle.name, "Poloska(Clone)1");
+  assert.deepEqual(vehicle.fuel, { value: 18.5, capacity: 21, unit: "L" });
+  assert.deepEqual(vehicle.parts.map(part => [part.name, part.attachedTo, part.condition]), [
+    ["594cc I2 23HP 39Nm Gasoline(Clone)3", "Poloska(Clone)1 · Engine", 74.25],
+    ["radiator_small(Clone)48", "Poloska(Clone)1 · Radiator", 47.5]
+  ]);
+});
+test("serializes only selected quantity, condition, fuel, and type-ammo tokens", () => {
+  const text = domainSave();
+  const doc = inspect(text);
+  const fields = [
+    doc.fields.find(field => field.id.endsWith(":Quantity")),
+    doc.fields.find(field => field.id.endsWith(":Condition")),
+    doc.fields.find(field => field.id.endsWith(":fuel")),
+    doc.fields.find(field => field.id === "weaponsAmmoInGun.ammoakms")
+  ];
+  assert.ok(fields.every(Boolean));
+  const values = new Map([[fields[0].id, 4], [fields[1].id, 99.5], [fields[2].id, 0], [fields[3].id, 45]]);
+  let expected = text;
+  for (const field of [...fields].sort((a, b) => b.start - a.start)) {
+    expected = expected.slice(0, field.start) + JSON.stringify(values.get(field.id)) + expected.slice(field.end);
+  }
+  const edited = serialize(text, values);
+  assert.equal(edited, expected);
+  const reopened = inspect(edited);
+  for (const [id, value] of values) assert.equal(reopened.fields.find(field => field.id === id).value, value);
+  assert.equal(serialize(text, {}), text);
+});
+test("bounds existing stack quantity, component percent and fuel by saved tank capacity", () => {
+  const text = domainSave();
+  const doc = inspect(text);
+  const quantity = doc.fields.find(field => field.id.endsWith(":Quantity"));
+  const condition = doc.fields.find(field => field.id.endsWith(":Condition"));
+  const fuel = doc.fields.find(field => field.id.endsWith(":fuel"));
+  assert.throws(() => serialize(text, { [quantity.id]: 0 }), /between 1 and/);
+  assert.throws(() => serialize(text, { [condition.id]: 100.01 }), /between 0 and 100/);
+  assert.throws(() => serialize(text, { [fuel.id]: 21.01 }), /between 0 and 21/);
+});

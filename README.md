@@ -30,8 +30,17 @@ Only fields already present with the expected type are exposed. No new fields, o
 | Game slot | `Player.value.objs.Health`, `Ammo.value.objs.armor` (0-100); inspected ammunition counts and capacities in `Ammo.value.objs` (nonnegative signed 32-bit integers) |
 | Settings | Peaceful mode, disable thirst/hunger, disable fatigue, map cheat, disable insanity, head bob, FPS, footsteps, toggle ADS |
 | Settings | Master, ambient, engine, boss, ambient music and main-menu music volumes (0-1); FOV (30-120) |
+| Game slot | Existing item instances, names, exact references, active state, tags, saved parent references, and available local positions (inspection only) |
+| Game slot | Existing item stack `Quantity` values (1-2,147,483,647) and verified item `Condition` scalars (0-100%) |
+| Game slot | Existing `weaponsAmmoInGun` counters by weapon type (nonnegative signed 32-bit integers); these are **not** per-instance ammunition |
+| Game slot | Existing vehicle fuel `Liquid` values, bounded by that vehicle's saved `LiquidCapacity` and labeled in L based on the game's player-facing units |
+| Game slot | `Condition` (%) for existing engine, radiator, or exhaust components only when a unique saved parent/mount reference proves the association |
 
-These are conservative **editor limits**, not claims about every limit enforced by the game. Saves whose supported values are outside these bounds are rejected rather than silently clamped. Inventory instances, weapon-loaded ammunition, world state, transforms, sanity triggers, save timestamps, and unverified settings remain untouched. Increasing a count does not create its associated inventory item.
+These are conservative **editor limits**, not claims about every limit enforced by the game. Saves whose supported values are outside these bounds are rejected rather than silently clamped. Object creation/deletion, ownership transfers, transforms, sanity triggers, save timestamps, and unverified settings remain untouched. Increasing a quantity changes only an existing saved stack; it does not create an item or infer that the object is carried.
+
+The **Saved items** view lists existing item objects, including inactive objects, and reports their saved names, references, parent/container evidence, and any safely matched scalar values. A parent reference that cannot be resolved is explicitly shown as unknown; the save does not consistently prove whether such an object is carried, stored, or in the world. The editor therefore does not present this list as a player inventory count. Duplicate object references are marked ambiguous, and their scalar fields are withheld. The `akms(Clone)50` instance is labeled by its saved identifier (AKMS); it is not renamed AK47. Ammunition counters are presented only at their saved weapon-type scope.
+
+The **Vehicles** view joins each vehicle to its scalar record by a unique matching ES3 reference. Fuel is editable only when both `Liquid` and `LiquidCapacity` are valid and consistent; the save has no explicit unit label, so L follows the game's player-facing units as described by the user. Engine, radiator, and exhaust condition is shown only when its saved transform parent matches that vehicle's corresponding mount. A separate vehicle-body damage/condition scalar was not found. Unresolved or ambiguous associations remain read-only with an explanation; the editor does not spawn, delete, or relink objects.
 
 ## Format and compatibility
 
