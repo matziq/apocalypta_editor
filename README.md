@@ -1,17 +1,23 @@
 # Apocalypter Save Editor
 
-A dependency-free, offline editor for the **actual text-based Easy Save 3 / ES3PlayMaker format** used by Apocalypter. Double-click `run.bat` on Windows to open `index.html` in your default browser, or open `index.html` directly in a current desktop browser. No installation, server, account, upload, or build step is required.
+A dependency-free, offline editor for the **actual text-based Easy Save 3 / ES3PlayMaker format** used by Apocalypter. On Windows, double-click `run.bat` to start the local picker bridge and open the editor in your default browser. The bridge uses built-in Windows PowerShell and Windows Forms; no packages or installation are needed. Alternatively, open `index.html` directly in a current desktop browser.
 
 The local Tools Menu discovers `run.bat` automatically under **Game Editors** as **Apocalypta Editor** (the display name comes from the repository folder). Refresh the menu's tool list if it was already open when the launcher was added. The launcher works from any working directory, including paths containing spaces.
 
 ## Use
 
 1. Close Apocalypter and back up your saves.
-2. Launch **Apocalypta Editor** from the Tools Menu, double-click `run.bat`, or open `index.html`; then choose `SaveGame1.es3` (or another slot) or `SaveSettings.es3`.
+2. Launch **Apocalypta Editor** from the Tools Menu or double-click `run.bat`. Click **Choose File** to open the current Windows user's `%USERPROFILE%\AppData\LocalLow\SawyerK Games\Apocalypter` folder. Choose `SaveGame1.es3` (or another slot) or `SaveSettings.es3`.
 3. Use **Download original backup** to preserve the exact opened bytes.
 4. Edit supported fields and review the before/after list. Invalid values block export.
 5. Choose **Export edited copy**. The browser downloads `SaveGame1.edited.es3` or `SaveSettings.edited.es3`; it never overwrites a file or writes to the game installation.
 6. With the game still closed, manually copy the edited file into the save folder under the original filename, keeping the backup somewhere separate. Load the matching slot. Restore the backup if needed.
+
+The Windows launcher reads the current user's save folder (not a hardcoded account path). If that folder does not exist, the editor reports its full expected path. The local PowerShell bridge listens only on `127.0.0.1`, uses a per-launch random token and exact Host/Origin checks, serves only its fixed editor assets, and accepts only a user-selected `.es3` file up to 20 MiB. It does not expose arbitrary file reads, writes, or command execution. Close the **Apocalypter Save Editor picker bridge** PowerShell window when finished; it also stops after an hour without requests. It normally uses port 58643 so browser preferences persist across launches; if that port is occupied it uses another available port, whose browser preferences are separate.
+
+When opening `index.html` directly instead of using `run.bat`, the browser file chooser is used and may not start in the game's save folder. This fallback has no native picker bridge; navigate to the save folder in the browser chooser. The browser chooser is also always available below the launcher's native button. Native failures display an error and advise relaunching with `run.bat` or using that fallback; canceling either chooser leaves the open save and its drafts unchanged.
+
+The native dialog is titled **Choose an Apocalypter save**. If Windows places it behind the browser, select it from the taskbar. The button shows an opening state until the dialog is completed or canceled. If the bridge has stopped, relaunch `run.bat`; a stale browser tab cannot restart it.
 
 Default Windows saves:
 
@@ -20,6 +26,12 @@ Default Windows saves:
 ```
 
 The game's installation folder is not the save folder. Do not copy edited files into `Apocalypter_Data`. Browser downloads go to your browser's configured download location; choose a different location in its save dialog if needed.
+
+## Appearance and vehicle actions
+
+The theme button switches between light and dark; the initial appearance follows the operating system, and the selected theme is persisted locally. Choose Spring, Summer, Autumn, or Winter for a coordinated UI color palette. Each season has readable light and dark colors for page surfaces, text, controls, tables, warnings, and focus states. Seasonal appearance is UI-only, persists locally, and never alters or dirties a game save.
+
+In the **Vehicles** section, select a saved vehicle and use **Repair components** or **Top off fuel** to stage changes to its supported, reference-matched component `Condition` fields (to 100%) or its verified fuel `Liquid` value (to its saved `LiquidCapacity`). The buttons are disabled if the selected vehicle has no eligible fields. Unrelated draft edits are preserved; an invalid target field is left unchanged. These actions use the existing before/after review, validation, and separate-copy export safeguards. They do not modify vehicle-body state, unlinked components, unknown fields, or the original save.
 
 ## Supported fields and limits
 
@@ -64,7 +76,7 @@ Only UTF-8 text up to 20 MiB is accepted. Invalid UTF-8, encrypted/binary data, 
 
 ## Development
 
-Node.js 18+ is needed only for tests. There are no npm dependencies.
+Node.js 18+ is needed only for tests. The Windows-only launcher self-test runs under Windows PowerShell; its test is skipped on other platforms. There are no npm dependencies.
 
 ```powershell
 npm test

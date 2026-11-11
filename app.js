@@ -7,6 +7,57 @@ let changes = new Map();
 let inputs = new Map();
 let readGeneration = 0;
 let activeSection = null;
+const themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+let preferences;
+try {
+  preferences = ApocalypterUi.load(localStorage, themeQuery.matches);
+} catch (error) {
+  preferences = { theme: "system", season: "spring", prefersDark: themeQuery.matches };
+  $("appearance-status").textContent = `Appearance preferences could not be loaded: ${error.message}. Default appearance is active; file opening is still available.`;
+}
+const pickerToken = document.querySelector('meta[name="save-picker-token"]')?.content || "";
+
+function updateAppearance() {
+  const result = ApocalypterUi.apply(document.body, preferences);
+  $("theme-toggle").textContent = result.theme === "dark" ? "Use light mode" : "Use dark mode";
+  $("theme-toggle").setAttribute("aria-pressed", String(result.theme === "dark"));
+  $("season-select").value = preferences.season;
+}
+
+function saveAppearance() {
+  updateAppearance();
+  try {
+    ApocalypterUi.save(localStorage, preferences);
+    $("appearance-status").textContent = "";
+  } catch (error) {
+    $("appearance-status").textContent = `Appearance changed for this visit but could not be saved: ${error.message}.`;
+  }
+}
+
+function setupPicker() {
+  const native = !!pickerToken && location.protocol === "http:" && location.hostname === "127.0.0.1";
+  $("native-picker-controls").hidden = !native;
+  $("browser-picker-controls").hidden = false;
+  $("browser-picker-hint").textContent = native
+    ? "Fallback: use the browser chooser if the Windows save-folder picker does not appear; it may require navigating to the save folder."
+    : "When opened directly as HTML, the browser may not honor a starting folder.";
+}
+
+setupPicker();
+updateAppearance();
+themeQuery.addEventListener("change", () => {
+  preferences.prefersDark = themeQuery.matches;
+  updateAppearance();
+});
+$("theme-toggle").addEventListener("click", () => {
+  const isDark = document.body.dataset.theme === "dark";
+  preferences.theme = isDark ? "light" : "dark";
+  saveAppearance();
+});
+$("season-select").addEventListener("change", () => {
+  preferences.season = $("season-select").value;
+  saveAppearance();
+});
 
 function message(text) { $("message").textContent = text; }
 function numericText(value) {
@@ -201,6 +252,18 @@ function renderItems() {
 function renderVehicles() {
   const rows = $("vehicle-rows");
   rows.replaceChildren();
+  $("vehicle-action-status").textContent = "";
+  const select = $("vehicle-select");
+  const previousSelection = select.value;
+  select.replaceChildren();
+  for (const vehicle of doc.vehicles) {
+    const option = document.createElement("option");
+    option.value = vehicle.id;
+    option.textContent = vehicle.name;
+    select.append(option);
+  }
+  if (doc.vehicles.some(vehicle => vehicle.id === previousSelection)) select.value = previousSelection;
+  $("vehicle-actions").hidden = doc.vehicles.length === 0;
   $("vehicles-note").textContent = doc.vehicles.length
     ? "Vehicle objects are joined to their saved records by matching ES3 references. Fuel uses the saved Liquid value and is capped by that vehicle's LiquidCapacity (shown in L per the game's player-facing units; the save itself stores no unit label). Only components linked by a saved parent reference to a vehicle's engine, radiator, or exhaust mount are attributed to that vehicle. No separate vehicle-body Condition field was found."
     : "This save contains no newGOArray_Cars list.";
@@ -240,6 +303,45 @@ function renderVehicles() {
     row.append(name, fuel, parts, reference);
     rows.append(row);
   }
+  updateVehicleActions();
+}
+
+function selectedVehicle() {
+  return doc?.vehicles.find(vehicle => vehicle.id === $("vehicle-select").value) || null;
+}
+
+function vehicleActionFields(vehicle) {
+  return (vehicle?.fieldIds || [])
+    .map(id => doc.fields.find(field => field.id === id))
+    .filter(Boolean);
+}
+
+function updateVehicleActions() {
+  const fields = vehicleActionFields(selectedVehicle());
+  $("repair-vehicle").disabled = !fields.some(field => field.id.endsWith(":Condition"));
+  $("topoff-vehicle").disabled = !fields.some(field => field.id.endsWith(":fuel"));
+}
+
+function stageVehicleAction(action) {
+  const vehicle = selectedVehicle();
+  const result = ApocalypterVehicleActions.stage(
+    vehicle,
+    doc.fields,
+    action,
+    field => {
+      const input = inputs.get(field.id);
+      return { value: input?.value, invalid: input?.getAttribute("aria-invalid") === "true" };
+    },
+    (field, value) => { inputs.get(field.id).value = value; },
+    ApocalypterSave.validate
+  );
+  refresh();
+  $("vehicle-action-status").textContent = result.staged
+    ? `${action === "repair" ? "Repair" : "Top-off"} staged ${result.staged} supported field${result.staged === 1 ? "" : "s"} for ${vehicle.name}.${result.skippedInvalid ? ` ${result.skippedInvalid} invalid target field${result.skippedInvalid === 1 ? " was" : "s were"} left unchanged.` : ""} Review the changes before exporting.`
+    : result.skippedInvalid
+      ? `${result.skippedInvalid} invalid target field${result.skippedInvalid === 1 ? " was" : "s were"} left unchanged. Correct it before staging this action.`
+      : `No eligible ${action === "repair" ? "component condition" : "fuel"} values needed updating for ${vehicle?.name || "the selected vehicle"}.`;
+  updateVehicleActions();
 }
 
 $("fields").addEventListener("submit", event => event.preventDefault());
@@ -257,12 +359,10 @@ $("item-filter").addEventListener("input", () => {
   const term = $("item-filter").value.trim().toLowerCase();
   for (const row of $("item-rows").querySelectorAll("tr[data-search]")) row.hidden = !row.dataset.search.includes(term);
 });
-$("file").addEventListener("change", async event => {
-  const file = event.target.files[0];
-  if (!file) return;
+async function openFile(file) {
+  if (!file) return false;
   if (pending() && !window.confirm("Discard the pending changes and open another save?")) {
-    event.target.value = "";
-    return;
+    return false;
   }
   const generation = ++readGeneration;
   try {
@@ -270,16 +370,53 @@ $("file").addEventListener("change", async event => {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
     const next = ApocalypterSave.inspect(text);
-    if (generation !== readGeneration) return;
+    if (generation !== readGeneration) return false;
     doc = next;
     originalBytes = bytes;
     fileName = file.name;
     render();
+    return true;
   } catch (error) {
     if (generation === readGeneration) message(`Could not open ${file.name}: ${error.message} Your current file has not changed.`);
+    return false;
   }
-  if (generation === readGeneration) event.target.value = "";
+}
+$("file").addEventListener("change", async event => {
+  await openFile(event.target.files[0]);
+  event.target.value = "";
 });
+$("native-picker").addEventListener("click", async () => {
+  const button = $("native-picker");
+  button.disabled = true;
+  button.textContent = "Opening save folder...";
+  $("picker-hint").textContent = 'Opening the Windows dialog "Choose an Apocalypter save". Check the taskbar if it appears behind your browser, or use the browser chooser below.';
+  try {
+    const response = await fetch("/api/pick", {
+      method: "POST",
+      headers: { "X-Editor-Token": pickerToken }
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `Picker request failed (${response.status}).`);
+    if (result.canceled) {
+      $("picker-hint").textContent = "File selection canceled; the open save and pending edits are unchanged.";
+      return;
+    }
+    const binary = atob(result.contentBase64);
+    const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+    const loaded = await openFile(new File([bytes], result.name, { type: "application/octet-stream" }));
+    if (loaded) $("picker-hint").textContent = `Loaded ${result.name} from the save folder.`;
+    else if (!pending()) $("picker-hint").textContent = "The selected file was not opened; the current save is unchanged.";
+  } catch (error) {
+    message(`Save picker failed: ${error.message}`);
+    $("picker-hint").textContent = "The native picker failed. Use the browser chooser below or relaunch with run.bat.";
+  } finally {
+    button.disabled = false;
+    button.textContent = "Choose File";
+  }
+});
+$("vehicle-select").addEventListener("change", updateVehicleActions);
+$("repair-vehicle").addEventListener("click", () => stageVehicleAction("repair"));
+$("topoff-vehicle").addEventListener("click", () => stageVehicleAction("topoff"));
 $("backup").addEventListener("click", () => download(originalBytes, `${fileName}.original.bak`));
 $("reset").addEventListener("click", () => {
   if (pending() && !window.confirm("Reset all pending changes to the opened original?")) return;

@@ -5,7 +5,7 @@
   "description": "Offline, lossless editor for verified Apocalypter ES3 save fields",
   "scripts": {
     "test": "node --test",
-    "check": "node --check save-format.js && node --check app.js"
+    "check": "node --check save-format.js && node --check ui-preferences.js && node --check vehicle-actions.js && node --check app.js"
   },
   "engines": { "node": ">=18" }
 }

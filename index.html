@@ -10,23 +10,44 @@ FORM: Familiar desktop utility, with an in-place before/after review instead of 
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="light dark">
   <title>Apocalypter Save Editor</title>
   <link rel="stylesheet" href="style.css">
   <script defer src="save-format.js"></script>
+  <script defer src="ui-preferences.js"></script>
+  <script defer src="vehicle-actions.js"></script>
   <script defer src="app.js"></script>
 </head>
 <body>
   <header>
     <div><h1>Apocalypter <span>Save Editor</span></h1><p>A careful tune-up before the next expedition.</p></div>
-    <span class="local">Offline &middot; stays on your device</span>
+    <div class="header-controls">
+      <label class="season-control" for="season-select">Season
+        <select id="season-select" aria-label="Seasonal appearance">
+          <option value="spring">Spring</option>
+          <option value="summer">Summer</option>
+          <option value="autumn">Autumn</option>
+          <option value="winter">Winter</option>
+        </select>
+      </label>
+      <button id="theme-toggle" type="button" aria-pressed="false">Use dark mode</button>
+      <span class="local">Offline &middot; stays on your device</span>
+      <span id="appearance-status" role="status" aria-live="polite"></span>
+    </div>
   </header>
   <main>
     <aside aria-label="File and safety controls">
       <h2>Start with a save</h2>
       <p>Close the game first. Open a game slot or settings file; the original is never overwritten.</p>
-      <label for="file">Open .es3 file</label>
-      <input id="file" type="file" accept=".es3">
+      <div id="native-picker-controls" hidden>
+        <button id="native-picker" type="button">Choose File</button>
+        <p id="picker-hint" class="picker-hint" role="status" aria-live="polite">Opens the current Windows user's Apocalypter save folder.</p>
+      </div>
+      <div id="browser-picker-controls">
+        <label for="file">Or choose an .es3 file with your browser</label>
+        <input id="file" type="file" accept=".es3">
+        <p id="browser-picker-hint" class="picker-hint">The browser chooser may not start in the game's save folder.</p>
+      </div>
       <p class="path">Windows save folder<br><code>%USERPROFILE%\AppData\LocalLow\SawyerK Games\Apocalypter</code></p>
       <hr>
       <h2>Save safely</h2>
@@ -52,6 +73,13 @@ FORM: Familiar desktop utility, with an in-place before/after review instead of 
       <section id="vehicles-panel" hidden aria-label="Saved vehicles">
         <h3>Saved vehicles</h3>
         <p id="vehicles-note"></p>
+        <div id="vehicle-actions" class="vehicle-actions">
+          <label for="vehicle-select">Selected vehicle</label>
+          <select id="vehicle-select"></select>
+          <button id="repair-vehicle" type="button" disabled>Repair components</button>
+          <button id="topoff-vehicle" type="button" disabled>Top off fuel</button>
+          <p id="vehicle-action-status" role="status" aria-live="polite"></p>
+        </div>
         <div class="table-wrap">
           <table><thead><tr><th>Saved vehicle</th><th>Fuel tank</th><th>Linked components</th><th>Vehicle record</th></tr></thead><tbody id="vehicle-rows"></tbody></table>
         </div>
