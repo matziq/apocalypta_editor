@@ -8,6 +8,21 @@ function Get-SaveFolder {
     Join-Path $ProfilePath "AppData\LocalLow\SawyerK Games\Apocalypter"
 }
 
+function New-SaveDialog {
+    param([string]$Folder)
+    $dialog = [System.Windows.Forms.OpenFileDialog]::new()
+    # The classic dialog honors InitialDirectory instead of shell dialog history.
+    $dialog.AutoUpgradeEnabled = $false
+    $dialog.InitialDirectory = [IO.Path]::GetFullPath($Folder)
+    $dialog.FileName = ""
+    $dialog.Filter = "Apocalypter save files (*.es3)|*.es3"
+    $dialog.Title = "Choose an Apocalypter save"
+    $dialog.CheckFileExists = $true
+    $dialog.Multiselect = $false
+    $dialog.RestoreDirectory = $true
+    return $dialog
+}
+
 function Test-PickerRequest {
     param(
         [string]$Method,
@@ -102,6 +117,13 @@ if ($SelfTest) {
     if ($folder -cne "C:\Users\Editor Test\AppData\LocalLow\SawyerK Games\Apocalypter") {
         throw "Save-folder path test failed: $folder"
     }
+    Add-Type -AssemblyName System.Windows.Forms
+    $dialog = New-SaveDialog -Folder $PSScriptRoot
+    try {
+        if ($dialog.AutoUpgradeEnabled -or $dialog.InitialDirectory -cne [IO.Path]::GetFullPath($PSScriptRoot) -or $dialog.FileName -ne "") {
+            throw "Picker must explicitly start at its requested directory without remembered shell selection."
+        }
+    } finally { $dialog.Dispose() }
     $hostName = "127.0.0.1:43129"
     $origin = "http://127.0.0.1:43129"
     $token = "unpredictable-test-token"
@@ -239,13 +261,7 @@ try {
                 Write-Json $context 404 @{ error = "The current user's Apocalypter save folder does not exist: $saveFolder" } $expectedOrigin
                 continue
             }
-            $dialog = [System.Windows.Forms.OpenFileDialog]::new()
-            $dialog.InitialDirectory = $saveFolder
-            $dialog.Filter = "Apocalypter save files (*.es3)|*.es3"
-            $dialog.Title = "Choose an Apocalypter save"
-            $dialog.CheckFileExists = $true
-            $dialog.Multiselect = $false
-            $dialog.RestoreDirectory = $true
+            $dialog = New-SaveDialog -Folder $saveFolder
             try {
                 if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
                     Write-Json $context 200 @{ canceled = $true } $expectedOrigin

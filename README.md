@@ -17,7 +17,7 @@ The Windows launcher reads the current user's save folder (not a hardcoded accou
 
 When opening `index.html` directly instead of using `run.bat`, the browser file chooser is used and may not start in the game's save folder. This fallback has no native picker bridge; navigate to the save folder in the browser chooser. The browser chooser is also always available below the launcher's native button. Native failures display an error and advise relaunching with `run.bat` or using that fallback; canceling either chooser leaves the open save and its drafts unchanged.
 
-The native dialog is titled **Choose an Apocalypter save**. If Windows places it behind the browser, select it from the taskbar. The button shows an opening state until the dialog is completed or canceled. If the bridge has stopped, relaunch `run.bat`; a stale browser tab cannot restart it.
+The native dialog is titled **Choose an Apocalypter save**. It uses the classic Windows file dialog with an explicit initial directory on every opening, avoiding the modern shell dialog's remembered location. If Windows places it behind the browser, select it from the taskbar. The button shows an opening state until the dialog is completed or canceled. If the bridge has stopped, relaunch `run.bat`; a stale browser tab cannot restart it. After updating the launcher, close its old bridge window and launch `run.bat` again so the new picker code is used.
 
 Default Windows saves:
 
