@@ -89,7 +89,7 @@ function itemRecord(name, ref, fields) {
     owner: { __type: "GameObject", _ES3Ref: String(ref), name }
   });
 }
-function domainSave({ duplicateItemRef = false } = {}) {
+function domainSave({ duplicateItemRef = false, worldItems = false, duplicateWorldRef = false, itemCapacity = false, crossArrayRef = false } = {}) {
   const shiv25 = gameObject("shiv(Clone)25", 101, 1001);
   const shiv55 = gameObject("shiv(Clone)55", 102, 1002);
   const akms = gameObject("akms(Clone)50", 103, 1003, 99001);
@@ -129,6 +129,36 @@ function domainSave({ duplicateItemRef = false } = {}) {
     newGOArray_Items: pm(null, [shiv25, shiv55, akms, bandage, duplicateBandage, engine, radiator]),
     newGOArray_Cars: pm(null, [car])
   };
+  if (worldItems) {
+    const looseName = "3L I5 Diesel(Clone)38";
+    const storedName = "3L I5 Diesel(Clone)39";
+    const ammoName = "ammo_box_762mm(Clone)40";
+    const canName = "Gasoline_Can(Clone)41";
+    root.newGOArray_Items.value.array.push(
+      gameObject(looseName, 801, 8001),
+      gameObject(storedName, duplicateWorldRef ? 801 : 802, 8002, 99009),
+      gameObject(ammoName, 803, 8003),
+      gameObject(canName, 804, 8004)
+    );
+    root[looseName] = itemRecord(looseName, 801, {
+      Condition: { __type: "float", value: 21.25 },
+      finalGearRatio: { __type: "float", value: 4 }
+    });
+    root[storedName] = itemRecord(storedName, duplicateWorldRef ? 801 : 802, {
+      Condition: { __type: "float", value: 34.5 }
+    });
+    root[ammoName] = itemRecord(ammoName, 803, { ammo: { __type: "int", value: 10 } });
+    root[canName] = itemRecord(canName, 804, {
+      Liquid: { __type: "float", value: 6.25 },
+      ...(itemCapacity ? { LiquidCapacity: { __type: "float", value: 20 } } : {})
+    });
+    if (crossArrayRef) {
+      root.newGOArray_Cars.value.array.push(gameObject("ambiguous_car(Clone)9", 801, 8099));
+      root["ambiguous_car(Clone)9"] = itemRecord("ambiguous_car(Clone)9", 801, {
+        Liquid: { __type: "float", value: 5 }, LiquidCapacity: { __type: "float", value: 20 }
+      });
+    }
+  }
   return JSON.stringify(root).replace(
     /"__type":"(float|int|bool)","value":(true|false|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
     '"__type":"$1"$2'
@@ -198,4 +228,48 @@ test("bounds existing stack quantity, component percent and fuel by saved tank c
   assert.throws(() => serialize(text, { [quantity.id]: 0 }), /between 1 and/);
   assert.throws(() => serialize(text, { [condition.id]: 100.01 }), /between 0 and 100/);
   assert.throws(() => serialize(text, { [fuel.id]: 21.01 }), /between 0 and 21/);
+});
+
+test("loose and unresolved-parent parts can be edited independently without ownership changes", () => {
+  const text = domainSave({ worldItems: true });
+  const doc = inspect(text);
+  const parts = doc.items.filter(item => item.name.startsWith("3L I5 Diesel"));
+  assert.equal(parts[0].location, "Unparented / world-root");
+  assert.equal(parts[1].location, "Unresolved parent / container");
+  const field = doc.fields.find(field => field.id === parts[0].fieldIds[0]);
+  assert.equal(field.section, "items");
+  assert.match(field.label, /Clone\)38/);
+  assert.equal(serialize(text, { [field.id]: 100 }), text.slice(0, field.start) + "100" + text.slice(field.end));
+  const reopened = inspect(serialize(text, { [field.id]: 100 }));
+  assert.equal(reopened.items.find(item => item.id === parts[1].id).condition, 34.5);
+  assert.deepEqual(reopened.items.map(item => [item.ref, item.parentRef]), doc.items.map(item => [item.ref, item.parentRef]));
+  assert.ok(parts[0].readOnlyFields.some(field => field.name === "finalGearRatio"));
+});
+
+test("world ammo boxes expose their own count while unknown liquid capacity stays read-only", () => {
+  const text = domainSave({ worldItems: true });
+  const doc = inspect(text);
+  const box = doc.items.find(item => item.name.startsWith("ammo_box_"));
+  const can = doc.items.find(item => item.name.startsWith("Gasoline_Can"));
+  assert.equal(box.ammo, 10);
+  const [ammoId] = box.fieldIds;
+  assert.equal(inspect(serialize(text, { [ammoId]: 0 })).items.find(item => item.id === box.id).ammo, 0);
+  for (const value of [-1, 0.5, 2147483648]) assert.throws(() => serialize(text, { [ammoId]: value }));
+  assert.equal(can.fieldIds.length, 0);
+  assert.match(can.readOnlyFields.find(field => field.name === "Liquid").reason, /no capacity or units are guessed/);
+  assert.throws(() => serialize(text, { [`${can.id}:Liquid`]: 20 }), /not supported/);
+});
+
+test("item liquids use only their own saved capacity and ambiguous world parts remain protected", () => {
+  const text = domainSave({ worldItems: true, itemCapacity: true });
+  const can = inspect(text).items.find(item => item.name.startsWith("Gasoline_Can"));
+  assert.deepEqual(can.liquid, { value: 6.25, capacity: 20 });
+  const [id] = can.fieldIds;
+  assert.equal(inspect(serialize(text, { [id]: 20 })).items.find(item => item.id === can.id).liquid.value, 20);
+  assert.throws(() => serialize(text, { [id]: 20.01 }), /between 0 and 20/);
+  const ambiguous = inspect(domainSave({ worldItems: true, duplicateWorldRef: true })).items.filter(item => item.name.startsWith("3L I5 Diesel"));
+  assert.ok(ambiguous.every(item => !item.fieldIds.length && !item.matchedRecord));
+  const crossArray = inspect(domainSave({ worldItems: true, crossArrayRef: true }));
+  assert.equal(crossArray.items.find(item => item.name === "3L I5 Diesel(Clone)38").fieldIds.length, 0);
+  assert.equal(crossArray.vehicles.find(car => car.name === "ambiguous_car(Clone)9").fieldIds.length, 0);
 });

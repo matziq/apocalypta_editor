@@ -240,7 +240,7 @@
     const itemObjects = gameObjects("newGOArray_Items");
     const carObjects = gameObjects("newGOArray_Cars");
     const refCounts = new Map();
-    for (const item of itemObjects) {
+    for (const item of [...itemObjects, ...carObjects]) {
       if (item.ref !== null) refCounts.set(item.ref, (refCounts.get(item.ref) || 0) + 1);
     }
 
@@ -249,7 +249,7 @@
     for (const car of carObjects) {
       const associated = wrapperOwner(car.name);
       const matched = associated && car.ref && associated.ref === car.ref;
-      const objectRefCount = car.ref ? carObjects.filter(candidate => candidate.ref === car.ref).length : 0;
+      const objectRefCount = car.ref ? refCounts.get(car.ref) : 0;
       const vehicle = {
         id: `vehicle:${car.ref ?? car.name}:${car.index}`,
         name: car.name,
@@ -303,7 +303,10 @@
         location: item.parentRef === null ? "Unparented / world-root" : "Unresolved parent / container",
         quantity: null,
         condition: null,
+        ammo: null,
+        liquid: null,
         loadedAmmo: null,
+        readOnlyFields: [],
         fieldIds: [],
         matchedRecord: !!matched,
         warnings: []
@@ -316,13 +319,13 @@
         if (quantity.value !== undefined) {
           if (quantity.value >= 1 && quantity.value <= 2147483647) {
             const id = `${itemRecord.id}:Quantity`;
-            const field = add(id, `${itemRecord.displayName} quantity`, "Existing item quantities", quantity.node, "int", 1, 2147483647, "items", "Changes this existing stack only; minimum 1 prevents deleting the object.");
+            const field = add(id, `${item.name} quantity`, "Existing item quantities", quantity.node, "int", 1, 2147483647, "items", "Changes this existing stack only, regardless of its world/container location; minimum 1 prevents deleting the object.");
             if (field) {
               itemRecord.quantity = field.value;
               itemRecord.fieldIds.push(field.id);
             }
           } else itemRecord.warnings.push("Saved quantity is outside the safe editable range (1 to 2,147,483,647); shown read-only.");
-        }
+        } else if (at(associated.data, "Quantity")) itemRecord.warnings.push(quantity.error);
       } else if (referenceIsUnique) {
         itemRecord.warnings.push("No uniquely matching typed item record; this existing object is shown read-only.");
       }
@@ -350,7 +353,7 @@
               ? `Condition scalar on this existing ${linkedCars[0].mountLabel.toLowerCase()} object, attached by its saved parent reference.`
               : "Condition on this existing item; vehicle or storage association is not established by its saved references.";
             const id = `${itemRecord.id}:Condition`;
-            const label = `${itemRecord.displayName} condition (%)`;
+            const label = `${item.name} condition (%)`;
             const field = add(id, label, group, condition.node, "float", 0, 100, section, description);
             if (field) {
               itemRecord.condition = field.value;
@@ -358,6 +361,35 @@
               if (linkedCars.length === 1) linkedCars[0].vehicle.fieldIds.push(field.id);
             }
           } else itemRecord.warnings.push("Condition value is outside the observed 0–100 percent range; shown read-only.");
+        } else if (at(associated.data, "Condition")) itemRecord.warnings.push(condition.error);
+
+        const ammoCount = numericValue(at(associated.data, "ammo"), "int", item.name);
+        if (ammoCount.value !== undefined && Number.isInteger(ammoCount.value) && ammoCount.value >= 0 && ammoCount.value <= 2147483647) {
+          const field = add(`${itemRecord.id}:ammo`, `${item.name} ammo count`, "Existing item ammunition", ammoCount.node, "int", 0, 2147483647, "items", "The ammo count stored on this exact item, not the player supply or a weapon-type counter.");
+          itemRecord.ammo = field.value;
+          itemRecord.fieldIds.push(field.id);
+        } else if (at(associated.data, "ammo")) itemRecord.warnings.push(ammoCount.error || "Item ammo must be a nonnegative signed 32-bit integer; shown read-only.");
+
+        const liquid = numericValue(at(associated.data, "Liquid"), "float", item.name);
+        const capacity = numericValue(at(associated.data, "LiquidCapacity"), "float", item.name);
+        if (liquid.value !== undefined && capacity.value !== undefined && capacity.value > 0 && liquid.value >= 0 && liquid.value <= capacity.value) {
+          const field = add(`${itemRecord.id}:Liquid`, `${item.name} liquid amount`, "Existing item liquids", liquid.node, "float", 0, capacity.value, "items", "This item's saved Liquid amount, bounded by its own saved LiquidCapacity. Units are not specified by the save.");
+          itemRecord.liquid = { value: field.value, capacity: capacity.value };
+          itemRecord.fieldIds.push(field.id);
+        }
+
+        const editableKeys = new Set(itemRecord.fieldIds.map(id => id.slice(id.lastIndexOf(":") + 1)));
+        for (const [name, node] of props(associated.data)) {
+          const value = node.implicit || at(node, "value");
+          if (!value || !["number", "boolean"].includes(value.kind) || editableKeys.has(name)) continue;
+          const reason = name === "Liquid"
+            ? "A valid amount and matching capacity are not both stored on this item; no capacity or units are guessed."
+            : name === "LiquidCapacity"
+              ? "Saved capacity is a limit, not an editable amount."
+              : ["Quantity", "Condition", "ammo"].includes(name)
+                ? "This saved value does not meet the supported type or range; it is preserved unchanged."
+                : "This field's gameplay meaning or safe range has not been verified; it is preserved unchanged.";
+          itemRecord.readOnlyFields.push({ name, value: value.value, reason });
         }
       }
       items.push(itemRecord);

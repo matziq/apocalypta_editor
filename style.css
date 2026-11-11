@@ -69,6 +69,13 @@ td small { display: block; color: var(--subtle); margin-top: 4px; }
 .location { color: var(--muted); }
 .location.unknown { color: var(--warning); }
 .empty-row { color: var(--muted); padding: 18px 12px; }
+.item-action { display: block; margin-top: 8px; padding: 7px 10px; font-size: 13px; }
+#item-rows tr[data-selected=true] { background: var(--table-head); }
+#item-filter-status, #item-edit-status, #item-read-only { font-size: 13px; }
+#item-editor { padding: 20px 0; margin-bottom: 20px; border-block: 1px solid var(--line); }
+#item-editor h3 { font-size: 18px; overflow-wrap: anywhere; }
+#item-read-only dt { font-weight: 600; margin-top: 12px; overflow-wrap: anywhere; }
+#item-read-only dd { margin: 3px 0 0; color: var(--subtle); }
 fieldset[data-section] { display: none; }
 fieldset[data-section].visible { display: block; }
 fieldset { margin: 28px 0; border: 0; padding: 0; min-width: 0; }
