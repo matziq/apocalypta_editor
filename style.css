@@ -84,6 +84,7 @@ input[type=checkbox] { width: 21px; height: 21px; justify-self: end; accent-colo
 #changes { padding-left: 20px; font-size: 14px; line-height: 1.9; }
 footer { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding-top: 24px; border-top: 1px solid var(--line); }
 footer p { font-size: 13px; color: var(--muted); }
+.save-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 @media (max-width: 760px) {
   header { align-items: start; flex-direction: column; padding: 24px; gap: 12px; }
   .header-controls { justify-content: flex-start; }

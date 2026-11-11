@@ -2,6 +2,7 @@ param([switch]$SelfTest, [switch]$NoLaunch)
 
 $ErrorActionPreference = "Stop"
 $maxBytes = 20 * 1024 * 1024
+. (Join-Path $PSScriptRoot "save-storage.ps1")
 
 function Get-SaveFolder {
     param([string]$ProfilePath = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile))
@@ -23,6 +24,21 @@ function New-SaveDialog {
     return $dialog
 }
 
+function New-PickerOwner {
+    param([string]$Folder)
+    $owner = [System.Windows.Forms.Form]::new()
+    $owner.Text = "Apocalypter Save Editor - file selection"
+    $owner.ClientSize = [Drawing.Size]::new(520, 100)
+    $owner.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+    $owner.TopMost = $true
+    $label = [System.Windows.Forms.Label]::new()
+    $label.Dock = [System.Windows.Forms.DockStyle]::Fill
+    $label.Padding = [System.Windows.Forms.Padding]::new(12)
+    $label.Text = "Select a save in the Windows dialog.`r`n`r`n$Folder"
+    $owner.Controls.Add($label)
+    return $owner
+}
+
 function Test-PickerRequest {
     param(
         [string]$Method,
@@ -37,15 +53,25 @@ function Test-PickerRequest {
         [string]$RequestedMethod,
         [string]$RequestedHeaders
     )
-    if ($HostHeader -cne $ExpectedHost -or $Origin -cne $ExpectedOrigin -or $Path -cne "/api/pick") { return $false }
+    if ($HostHeader -cne $ExpectedHost -or $Origin -cne $ExpectedOrigin -or $Path -cnotin @("/api/pick", "/api/save", "/api/status")) { return $false }
     if ($Method -ceq "POST") {
-        return $Token -ceq $ExpectedToken -and $ContentLength -eq 0
+        $lengthAllowed = if ($Path -ceq "/api/save") { $ContentLength -gt 0 -and $ContentLength -le 1048576 } else { $ContentLength -eq 0 }
+        return $Token -ceq $ExpectedToken -and $lengthAllowed
     }
     if ($Method -ceq "OPTIONS") {
-        $headers = ([string]$RequestedHeaders).Trim().ToLowerInvariant()
-        return $RequestedMethod -ceq "POST" -and $headers -ceq "x-editor-token"
+        $headers = (([string]$RequestedHeaders).ToLowerInvariant().Split(",") | ForEach-Object { $_.Trim() } | Sort-Object -Unique) -join ","
+        return $RequestedMethod -ceq "POST" -and $headers -cin @("x-editor-token", "content-type,x-editor-token")
     }
     return $false
+}
+
+function Resolve-OpenedSaveRequest {
+    param($Payload, [hashtable]$OpenedFiles)
+    $unknown = @($Payload.PSObject.Properties.Name | Where-Object { $_ -cnotin @("handle", "changes", "confirmed") })
+    if ($unknown.Count -or $Payload.confirmed -isnot [bool] -or $Payload.handle -isnot [string] -or -not $OpenedFiles.ContainsKey($Payload.handle)) {
+        throw "Save request must identify an opened native file; client-supplied paths are not accepted."
+    }
+    return $OpenedFiles[$Payload.handle]
 }
 
 function New-SessionToken {
@@ -124,6 +150,10 @@ if ($SelfTest) {
             throw "Picker must explicitly start at its requested directory without remembered shell selection."
         }
     } finally { $dialog.Dispose() }
+    $owner = New-PickerOwner -Folder $folder
+    try {
+        if (-not $owner.TopMost -or -not $owner.ShowInTaskbar) { throw "Native picker must have a visible, discoverable window owner." }
+    } finally { $owner.Dispose() }
     $hostName = "127.0.0.1:43129"
     $origin = "http://127.0.0.1:43129"
     $token = "unpredictable-test-token"
@@ -133,6 +163,8 @@ if ($SelfTest) {
         ExpectedToken = $token; ContentLength = 0
     }
     if (-not (Test-PickerRequest @valid)) { throw "Authorized picker request was rejected." }
+    $statusRequest = $valid.Clone(); $statusRequest.Path = "/api/status"
+    if (-not (Test-PickerRequest @statusRequest)) { throw "Authenticated bridge readiness request was rejected." }
     $invalid = $valid.Clone(); $invalid.Token = "wrong"
     if (Test-PickerRequest @invalid) { throw "Invalid token was accepted." }
     $invalid = $valid.Clone(); $invalid.HostHeader = "localhost:43129"
@@ -151,6 +183,22 @@ if ($SelfTest) {
     if (-not (Test-PickerRequest @preflight)) { throw "Valid same-origin preflight was rejected." }
     $invalid = $preflight.Clone(); $invalid.Origin = "http://localhost:43129"
     if (Test-PickerRequest @invalid) { throw "Unexpected preflight Origin was accepted." }
+    $saveRequest = $valid.Clone(); $saveRequest.Path = "/api/save"; $saveRequest.ContentLength = 128
+    if (-not (Test-PickerRequest @saveRequest)) { throw "Authorized bounded save request was rejected." }
+    $saveRequest.ContentLength = 1048577
+    if (Test-PickerRequest @saveRequest) { throw "Oversized save request was accepted." }
+    $sources = @{ "test-handle" = @{ Path = "server-bound.es3"; Hash = "test-hash" } }
+    $request = [PSCustomObject]@{ handle = "test-handle"; confirmed = $true; changes = [PSCustomObject]@{ peacefulMode = $true } }
+    if ((Resolve-OpenedSaveRequest $request $sources).Path -cne "server-bound.es3") { throw "Opened handle did not resolve server-side." }
+    foreach ($invalidRequest in @(
+        [PSCustomObject]@{ handle = "test-handle"; confirmed = $true; path = "injected.es3" },
+        [PSCustomObject]@{ handle = "unknown-handle"; confirmed = $true }
+    )) {
+        $rejected = $false
+        try { Resolve-OpenedSaveRequest $invalidRequest $sources | Out-Null }
+        catch { $rejected = $true }
+        if (-not $rejected) { throw "An injected path or unknown handle was accepted." }
+    }
     if (-not (Get-PickerSelection -SelectedPath "" -MaxBytes $maxBytes).canceled) {
         throw "Picker cancellation was not reported as a normal result."
     }
@@ -170,10 +218,13 @@ if (-not $IsWindows -and $PSVersionTable.PSVersion.Major -ge 6) {
 
 Add-Type -AssemblyName System.Windows.Forms
 $saveFolder = Get-SaveFolder
+$nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
+$nodePath = if ($nodeCommand) { $nodeCommand.Source } else { $null }
+$openedFiles = @{}
 $token = New-SessionToken
-$listener = [Net.HttpListener]::new()
 $port = 0
 for ($attempt = 0; $attempt -lt 12; $attempt++) {
+    $listener = [Net.HttpListener]::new()
     $candidate = if ($attempt -eq 0) { 58643 } else { Get-Random -Minimum 49152 -Maximum 65536 }
     $prefix = "http://127.0.0.1:$candidate/"
     $listener.Prefixes.Clear()
@@ -183,6 +234,7 @@ for ($attempt = 0; $attempt -lt 12; $attempt++) {
         $port = $candidate
         break
     } catch {
+        $listener.Close()
         if ($attempt -eq 11) { throw "Could not start the local picker bridge: $($_.Exception.Message)" }
     }
 }
@@ -230,7 +282,7 @@ try {
             continue
         }
 
-        if ($request.HttpMethod -ceq "OPTIONS" -and $path -ceq "/api/pick") {
+        if ($request.HttpMethod -ceq "OPTIONS" -and $path -cin @("/api/pick", "/api/save", "/api/status")) {
             $allowed = Test-PickerRequest -Method $request.HttpMethod -Path $path -HostHeader $hostHeader `
                 -Origin $origin -ExpectedHost $expectedHost -ExpectedOrigin $expectedOrigin `
                 -RequestedMethod $request.Headers["Access-Control-Request-Method"] `
@@ -242,10 +294,26 @@ try {
             }
             $context.Response.Headers["Access-Control-Allow-Origin"] = $expectedOrigin
             $context.Response.Headers["Access-Control-Allow-Methods"] = "POST"
-            $context.Response.Headers["Access-Control-Allow-Headers"] = "X-Editor-Token"
+            $context.Response.Headers["Access-Control-Allow-Headers"] = "X-Editor-Token, Content-Type"
             $context.Response.Headers["Access-Control-Max-Age"] = "60"
             $context.Response.Headers["Vary"] = "Origin"
             Write-Response $context 204 "text/plain; charset=utf-8" ([byte[]]@()) $expectedOrigin
+            continue
+        }
+
+        if ($request.HttpMethod -ceq "POST" -and $path -ceq "/api/status") {
+            $allowed = Test-PickerRequest -Method $request.HttpMethod -Path $path -HostHeader $hostHeader `
+                -Origin $origin -Token $request.Headers["X-Editor-Token"] -ExpectedHost $expectedHost `
+                -ExpectedOrigin $expectedOrigin -ExpectedToken $token -ContentLength $request.ContentLength64
+            if (-not $allowed) {
+                Write-Json $context 403 @{ error = "Bridge readiness request was rejected." } $expectedOrigin
+                continue
+            }
+            Write-Json $context 200 @{
+                protocolVersion = 2
+                saveFolder = $saveFolder
+                folderExists = [bool](Test-Path -LiteralPath $saveFolder -PathType Container)
+            } $expectedOrigin
             continue
         }
 
@@ -262,8 +330,11 @@ try {
                 continue
             }
             $dialog = New-SaveDialog -Folder $saveFolder
+            $owner = New-PickerOwner -Folder $saveFolder
             try {
-                if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
+                $owner.Show()
+                $owner.Activate()
+                if ($dialog.ShowDialog($owner) -ne [System.Windows.Forms.DialogResult]::OK) {
                     Write-Json $context 200 @{ canceled = $true } $expectedOrigin
                     continue
                 }
@@ -275,11 +346,45 @@ try {
                     continue
                 }
                 $payload.Remove("status")
+                $handle = New-SessionToken
+                if ($openedFiles.Count -ge 32) { $openedFiles.Remove(@($openedFiles.Keys)[0]) }
+                $openedFiles[$handle] = @{
+                    Path = [IO.Path]::GetFullPath($dialog.FileName)
+                    Hash = Get-SaveHash ([Convert]::FromBase64String($payload.contentBase64))
+                }
+                $payload.source = @{
+                    handle = $handle
+                    path = $openedFiles[$handle].Path
+                    canSave = [bool]$nodePath
+                }
                 Write-Json $context 200 $payload $expectedOrigin
             } catch {
                 Write-Json $context 500 @{ error = "Could not read the selected save: $($_.Exception.Message)" } $expectedOrigin
             } finally {
                 $dialog.Dispose()
+                $owner.Dispose()
+            }
+            continue
+        }
+
+        if ($request.HttpMethod -ceq "POST" -and $path -ceq "/api/save") {
+            $allowed = Test-PickerRequest -Method $request.HttpMethod -Path $path -HostHeader $hostHeader `
+                -Origin $origin -Token $request.Headers["X-Editor-Token"] -ExpectedHost $expectedHost `
+                -ExpectedOrigin $expectedOrigin -ExpectedToken $token -ContentLength $request.ContentLength64
+            if (-not $allowed) {
+                Write-Json $context 403 @{ error = "Save request origin, token, or size was rejected." } $expectedOrigin
+                continue
+            }
+            try {
+                $reader = [IO.StreamReader]::new($request.InputStream, [Text.Encoding]::UTF8)
+                try { $body = $reader.ReadToEnd() } finally { $reader.Dispose() }
+                $payload = $body | ConvertFrom-Json
+                $source = Resolve-OpenedSaveRequest -Payload $payload -OpenedFiles $openedFiles
+                $result = Save-OpenedDocument -Source $source -Changes $payload.changes `
+                    -Confirmed $payload.confirmed -NodePath $nodePath
+                Write-Json $context 200 $result $expectedOrigin
+            } catch {
+                Write-Json $context 409 @{ error = $_.Exception.Message } $expectedOrigin
             }
             continue
         }

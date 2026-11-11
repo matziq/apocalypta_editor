@@ -3,7 +3,7 @@
 <!--
 THESIS: A save workbench that makes the original and the proposed changes explicit.
 OWN-WORLD: Daylight-neutral canvas, forest-green actions, system UI type and ruled rows.
-STORY: Open an existing save, edit verified fields, review, export a separate copy.
+STORY: Open an existing save, edit verified fields, review, then back up and save or export a copy.
 FIRST VIEWPORT: Safety and opening controls on the left; file state and fields on the right.
 FORM: Familiar desktop utility, with an in-place before/after review instead of a modal.
 -->
@@ -38,20 +38,20 @@ FORM: Familiar desktop utility, with an in-place before/after review instead of 
   <main>
     <aside aria-label="File and safety controls">
       <h2>Start with a save</h2>
-      <p>Close the game first. Open a game slot or settings file; the original is never overwritten.</p>
+      <p>Close the game first. Open a game slot or settings file. Saving over it requires your confirmation and an automatic backup.</p>
       <div id="native-picker-controls" hidden>
-        <button id="native-picker" type="button">Choose File</button>
+        <button id="native-picker" type="button" aria-label="Choose File in Windows save folder">Choose File</button>
         <p id="picker-hint" class="picker-hint" role="status" aria-live="polite">Opens the current Windows user's Apocalypter save folder.</p>
       </div>
       <div id="browser-picker-controls">
-        <label for="file">Or choose an .es3 file with your browser</label>
-        <input id="file" type="file" accept=".es3">
+        <label for="file">Browser picker (folder not controlled)</label>
+        <input id="file" type="file" accept=".es3" aria-label="Browser picker (folder not controlled)">
         <p id="browser-picker-hint" class="picker-hint">The browser chooser may not start in the game's save folder.</p>
       </div>
       <p class="path">Windows save folder<br><code>%USERPROFILE%\AppData\LocalLow\SawyerK Games\Apocalypter</code></p>
       <hr>
       <h2>Save safely</h2>
-      <p>Download an original backup, review your changes, then export an edited copy. Replace the matching save manually only after making a backup.</p>
+      <p>Review your changes. Save changes backs up the native-opened file before confirmed replacement. Export a separate copy instead if you prefer.</p>
       <button id="backup" disabled>Download original backup</button>
       <button id="reset" disabled>Reset all changes</button>
       <p class="note">Only verified values on existing objects can change. Object references and unknown data stay untouched.</p>
@@ -86,7 +86,13 @@ FORM: Familiar desktop utility, with an in-place before/after review instead of 
       </section>
       <form id="fields" hidden novalidate></form>
       <section id="review" hidden aria-label="Change review"><h3>Review changes</h3><ul id="changes"></ul></section>
-      <footer><p id="save-hint">Open a save to begin.</p><button id="export" disabled>Export edited copy</button></footer>
+      <footer>
+        <p id="save-hint">Open a save to begin.</p>
+        <div class="save-actions">
+          <button id="save" disabled>Save changes</button>
+          <button id="export" disabled>Export edited copy</button>
+        </div>
+      </footer>
     </section>
   </main>
 </body>

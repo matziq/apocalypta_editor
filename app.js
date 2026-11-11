@@ -7,6 +7,8 @@ let changes = new Map();
 let inputs = new Map();
 let readGeneration = 0;
 let activeSection = null;
+let nativeSource = null;
+let saving = false;
 const themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
 let preferences;
 try {
@@ -37,10 +39,10 @@ function saveAppearance() {
 function setupPicker() {
   const native = !!pickerToken && location.protocol === "http:" && location.hostname === "127.0.0.1";
   $("native-picker-controls").hidden = !native;
-  $("browser-picker-controls").hidden = false;
+  $("browser-picker-controls").hidden = native;
   $("browser-picker-hint").textContent = native
-    ? "Fallback: use the browser chooser if the Windows save-folder picker does not appear; it may require navigating to the save folder."
-    : "When opened directly as HTML, the browser may not honor a starting folder.";
+    ? "Native connection unavailable. This browser fallback cannot control the starting folder; relaunch run.bat for the save-folder picker."
+    : "This is the browser-only version. Launch run.bat for the Windows save-folder picker and backed-up overwrite saves.";
 }
 
 setupPicker();
@@ -98,7 +100,14 @@ function refresh() {
   $("review").hidden = !changes.size;
   $("dirty").textContent = changes.size ? `${changes.size} changed` : errors.length ? "Invalid values" : "Original values";
   $("export").disabled = !!errors.length || !changes.size;
-  $("save-hint").textContent = errors.length ? "Resolve invalid values before exporting." : changes.size ? "Review the changes above, then export a separate copy." : "No pending changes.";
+  $("save").disabled = saving || !!errors.length || !changes.size || !nativeSource?.canSave;
+  $("save-hint").textContent = errors.length
+    ? "Resolve invalid values before saving or exporting."
+    : changes.size
+      ? nativeSource?.canSave
+        ? `Review changes, then save over ${nativeSource.path} with an automatic backup, or export a copy.`
+        : "Export a copy, or reopen through the native picker with Node.js available to save in place."
+      : nativeSource ? `No pending changes. Source: ${nativeSource.path}` : "No pending changes. Browser-opened files support export only.";
   message(errors.join(" "));
 }
 function pending() {
@@ -318,11 +327,12 @@ function vehicleActionFields(vehicle) {
 
 function updateVehicleActions() {
   const fields = vehicleActionFields(selectedVehicle());
-  $("repair-vehicle").disabled = !fields.some(field => field.id.endsWith(":Condition"));
-  $("topoff-vehicle").disabled = !fields.some(field => field.id.endsWith(":fuel"));
+  $("repair-vehicle").disabled = saving || !fields.some(field => field.id.endsWith(":Condition"));
+  $("topoff-vehicle").disabled = saving || !fields.some(field => field.id.endsWith(":fuel"));
 }
 
 function stageVehicleAction(action) {
+  if (saving) return;
   const vehicle = selectedVehicle();
   const result = ApocalypterVehicleActions.stage(
     vehicle,
@@ -337,7 +347,7 @@ function stageVehicleAction(action) {
   );
   refresh();
   $("vehicle-action-status").textContent = result.staged
-    ? `${action === "repair" ? "Repair" : "Top-off"} staged ${result.staged} supported field${result.staged === 1 ? "" : "s"} for ${vehicle.name}.${result.skippedInvalid ? ` ${result.skippedInvalid} invalid target field${result.skippedInvalid === 1 ? " was" : "s were"} left unchanged.` : ""} Review the changes before exporting.`
+    ? `${action === "repair" ? "Repair" : "Top-off"} staged ${result.staged} supported field${result.staged === 1 ? "" : "s"} for ${vehicle.name}.${result.skippedInvalid ? ` ${result.skippedInvalid} invalid target field${result.skippedInvalid === 1 ? " was" : "s were"} left unchanged.` : ""} Review the changes before saving or exporting.`
     : result.skippedInvalid
       ? `${result.skippedInvalid} invalid target field${result.skippedInvalid === 1 ? " was" : "s were"} left unchanged. Correct it before staging this action.`
       : `No eligible ${action === "repair" ? "component condition" : "fuel"} values needed updating for ${vehicle?.name || "the selected vehicle"}.`;
@@ -361,6 +371,10 @@ $("item-filter").addEventListener("input", () => {
 });
 async function openFile(file) {
   if (!file) return false;
+  if (saving) {
+    message("Wait for the current save operation to finish before opening another file.");
+    return false;
+  }
   if (pending() && !window.confirm("Discard the pending changes and open another save?")) {
     return false;
   }
@@ -374,6 +388,7 @@ async function openFile(file) {
     doc = next;
     originalBytes = bytes;
     fileName = file.name;
+    nativeSource = null;
     render();
     return true;
   } catch (error) {
@@ -386,11 +401,31 @@ $("file").addEventListener("change", async event => {
   event.target.value = "";
 });
 $("native-picker").addEventListener("click", async () => {
+  if (saving) return;
   const button = $("native-picker");
   button.disabled = true;
-  button.textContent = "Opening save folder...";
-  $("picker-hint").textContent = 'Opening the Windows dialog "Choose an Apocalypter save". Check the taskbar if it appears behind your browser, or use the browser chooser below.';
+  button.textContent = "Checking native bridge...";
+  $("picker-hint").textContent = "Checking the local launcher's connection before opening the Windows dialog.";
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    let status;
+    try {
+      const readiness = await fetch("/api/status", {
+        method: "POST",
+        headers: { "X-Editor-Token": pickerToken },
+        signal: controller.signal
+      });
+      if (!readiness.ok) throw new Error("This native bridge is unavailable or outdated. Relaunch run.bat and use its newly opened page.");
+      status = await readiness.json();
+    } catch (error) {
+      if (error.name === "AbortError") throw new Error('The native bridge did not respond within 5 seconds. Check for an already open "Choose an Apocalypter save" dialog, or relaunch run.bat and use its newly opened page.');
+      throw error;
+    } finally { clearTimeout(timeout); }
+    if (status.protocolVersion !== 2) throw new Error("This page is connected to an older native bridge. Relaunch run.bat and use its newly opened page.");
+    if (!status.folderExists) throw new Error(`The current user's Apocalypter save folder does not exist: ${status.saveFolder}`);
+    button.textContent = "Waiting for Windows dialog...";
+    $("picker-hint").textContent = `Windows picker requested for ${status.saveFolder}. Select a file or cancel in "Choose an Apocalypter save"; check the taskbar if necessary.`;
     const response = await fetch("/api/pick", {
       method: "POST",
       headers: { "X-Editor-Token": pickerToken }
@@ -404,10 +439,17 @@ $("native-picker").addEventListener("click", async () => {
     const binary = atob(result.contentBase64);
     const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
     const loaded = await openFile(new File([bytes], result.name, { type: "application/octet-stream" }));
-    if (loaded) $("picker-hint").textContent = `Loaded ${result.name} from the save folder.`;
+    if (loaded) {
+      nativeSource = result.source || null;
+      refresh();
+      $("picker-hint").textContent = nativeSource?.canSave
+        ? `Loaded ${result.name}. Save changes can back up and replace ${nativeSource.path} after confirmation.`
+        : `Loaded ${result.name}. Saving in place needs Node.js 18 or newer; export remains available.`;
+    }
     else if (!pending()) $("picker-hint").textContent = "The selected file was not opened; the current save is unchanged.";
   } catch (error) {
     message(`Save picker failed: ${error.message}`);
+    $("browser-picker-controls").hidden = false;
     $("picker-hint").textContent = "The native picker failed. Use the browser chooser below or relaunch with run.bat.";
   } finally {
     button.disabled = false;
@@ -417,6 +459,54 @@ $("native-picker").addEventListener("click", async () => {
 $("vehicle-select").addEventListener("change", updateVehicleActions);
 $("repair-vehicle").addEventListener("click", () => stageVehicleAction("repair"));
 $("topoff-vehicle").addEventListener("click", () => stageVehicleAction("topoff"));
+$("save").addEventListener("click", async () => {
+  refresh();
+  if ($("save").disabled) return;
+  const source = nativeSource;
+  if (!window.confirm(`Overwrite this save?\n\n${source.path}\n\nAn automatic, uniquely named backup of its current bytes will be created beside it before replacement. Close the game first. Cancel makes no changes.`)) return;
+  saving = true;
+  ++readGeneration;
+  $("save").textContent = "Saving...";
+  $("fields").inert = true;
+  $("native-picker").disabled = true;
+  $("file").disabled = true;
+  $("reset").disabled = true;
+  $("vehicle-select").disabled = true;
+  $("repair-vehicle").disabled = true;
+  $("topoff-vehicle").disabled = true;
+  refresh();
+  try {
+    const response = await fetch("/api/save", {
+      method: "POST",
+      headers: { "X-Editor-Token": pickerToken, "Content-Type": "application/json" },
+      body: JSON.stringify({ handle: source.handle, changes: Object.fromEntries(changes), confirmed: true })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `Save failed (${response.status}).`);
+    if (result.canceled) {
+      message("Save canceled; the file and pending edits are unchanged.");
+      return;
+    }
+    const bytes = Uint8Array.from(atob(result.contentBase64), character => character.charCodeAt(0));
+    const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    doc = ApocalypterSave.inspect(text);
+    originalBytes = bytes;
+    render();
+    message(`Saved ${source.path}. Backup: ${result.backupPath}`);
+  } catch (error) {
+    message(`Save failed: ${error.message} Pending edits remain available. If the connection failed after writing, reopen the file to check its current state before retrying.`);
+  } finally {
+    saving = false;
+    $("save").textContent = "Save changes";
+    $("fields").inert = false;
+    $("native-picker").disabled = false;
+    $("file").disabled = false;
+    $("reset").disabled = !doc;
+    $("vehicle-select").disabled = false;
+    updateVehicleActions();
+    $("save").disabled = !changes.size || !source.canSave || [...inputs.values()].some(input => input.getAttribute("aria-invalid") === "true");
+  }
+});
 $("backup").addEventListener("click", () => download(originalBytes, `${fileName}.original.bak`));
 $("reset").addEventListener("click", () => {
   if (pending() && !window.confirm("Reset all pending changes to the opened original?")) return;
