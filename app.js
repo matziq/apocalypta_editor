@@ -9,20 +9,94 @@ let fieldRows = new Map();
 let fieldHomes = new Map();
 let itemFieldIds = new Set();
 let itemRows = new Map();
+let vehicleSummaryRows = new Map();
 let selectedItemId = null;
 let readGeneration = 0;
 let activeSection = null;
 let nativeSource = null;
 let saving = false;
+let savingAutomatically = false;
+let openingNative = false;
+let autosaveTimer = null;
+let autosaveRequested = false;
+let autosaveFailed = false;
+let autosaveFailureMessage = "";
+let helpCounter = 0;
+let helpCloseTimer = null;
+let helpTarget = null;
+let helpPinned = false;
+const saveButtons = ["save", "save-top", "save-side"];
 const themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
 let preferences;
 try {
   preferences = ApocalypterUi.load(localStorage, themeQuery.matches);
 } catch (error) {
-  preferences = { theme: "system", season: "spring", prefersDark: themeQuery.matches };
+  preferences = { theme: "system", season: "spring", prefersDark: themeQuery.matches, autosave: false, editableOnly: false };
   $("appearance-status").textContent = `Appearance preferences could not be loaded: ${error.message}. Default appearance is active; file opening is still available.`;
 }
 const pickerToken = document.querySelector('meta[name="save-picker-token"]')?.content || "";
+
+function hideHelp() {
+  clearTimeout(helpCloseTimer);
+  $("floating-help").hidden = true;
+  helpTarget = null;
+  helpPinned = false;
+}
+function showHelp(target, text, pinned = false) {
+  clearTimeout(helpCloseTimer);
+  const popup = $("floating-help");
+  helpTarget = target;
+  helpPinned = pinned;
+  popup.textContent = text;
+  popup.hidden = false;
+  const bounds = target.getBoundingClientRect();
+  const size = popup.getBoundingClientRect();
+  popup.style.left = `${Math.max(12, Math.min(bounds.left, document.documentElement.clientWidth - size.width - 12))}px`;
+  const below = bounds.bottom + 8;
+  popup.style.top = `${Math.max(12, Math.min(below + size.height <= innerHeight - 12 ? below : bounds.top - size.height - 8, innerHeight - size.height - 12))}px`;
+}
+function attachHelp(container, text, label, input) {
+  if (!text) throw new Error(`Missing help for ${label}.`);
+  const description = document.createElement("span");
+  description.className = "sr-only";
+  description.id = `help-${++helpCounter}`;
+  description.textContent = text;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "help-trigger";
+  button.textContent = "?";
+  button.setAttribute("aria-label", `Help: ${label}`);
+  button.setAttribute("aria-describedby", description.id);
+  function leave() {
+    if (!helpPinned) helpCloseTimer = setTimeout(hideHelp, 200);
+  }
+  button.addEventListener("mouseenter", () => showHelp(button, text));
+  button.addEventListener("mouseleave", leave);
+  button.addEventListener("focus", () => showHelp(button, text));
+  button.addEventListener("blur", leave);
+  button.addEventListener("click", event => {
+    event.preventDefault();
+    if (helpTarget === button && helpPinned) hideHelp();
+    else showHelp(button, text, true);
+  });
+  if (input) {
+    const previous = input.getAttribute("aria-describedby");
+    input.setAttribute("aria-describedby", [previous, description.id].filter(Boolean).join(" "));
+    input.addEventListener("focus", () => showHelp(input, text));
+    input.addEventListener("blur", leave);
+  }
+  container.append(button, description);
+}
+$("floating-help").addEventListener("mouseenter", () => clearTimeout(helpCloseTimer));
+$("floating-help").addEventListener("mouseleave", () => { if (!helpPinned) hideHelp(); });
+window.addEventListener("keydown", event => { if (event.key === "Escape") hideHelp(); });
+window.addEventListener("resize", hideHelp);
+window.addEventListener("scroll", () => {
+  if (!helpTarget) return;
+  const bounds = helpTarget.getBoundingClientRect();
+  if (bounds.bottom < 0 || bounds.top > innerHeight) hideHelp();
+  else showHelp(helpTarget, $("floating-help").textContent, helpPinned);
+});
 
 function updateAppearance() {
   const result = ApocalypterUi.apply(document.body, preferences);
@@ -105,7 +179,15 @@ function refresh() {
   $("review").hidden = !changes.size;
   $("dirty").textContent = changes.size ? `${changes.size} changed` : errors.length ? "Invalid values" : "Original values";
   $("export").disabled = !!errors.length || !changes.size;
-  $("save").disabled = saving || !!errors.length || !changes.size || !nativeSource?.canSave;
+  for (const id of saveButtons) $(id).disabled = saving || openingNative || !!errors.length || !changes.size || !nativeSource?.canSave;
+  $("autosave").disabled = !nativeSource?.canSave || !nativeSource?.backupPath || openingNative;
+  $("autosave").checked = preferences.autosave;
+  if (!nativeSource?.canSave) $("autosave-status").textContent = "Autosave unavailable: open through run.bat with Node.js 18+; browser files support export only.";
+  else if (!preferences.autosave) $("autosave-status").textContent = "Autosave is off. Changes stay staged until a confirmed Save.";
+  else if (autosaveFailed) $("autosave-status").textContent = `Autosave stopped after an error: ${autosaveFailureMessage}. Drafts are kept; resolve the problem, then turn autosave off and on to retry.`;
+  else if (errors.length) $("autosave-status").textContent = "Autosave paused: correct invalid drafts and commit the corrected value.";
+  else if (savingAutomatically) $("autosave-status").textContent = `Autosaving ${nativeSource.path}...`;
+  else if (changes.size) $("autosave-status").textContent = `Autosave enabled for ${nativeSource.path}. Commit a valid change to save.`;
   $("save-hint").textContent = errors.length
     ? "Resolve invalid values before saving or exporting."
     : changes.size
@@ -119,6 +201,7 @@ function pending() {
   return changes.size > 0 || [...inputs.values()].some(input => input.getAttribute("aria-invalid") === "true");
 }
 function render() {
+  hideHelp();
   $("fields").replaceChildren();
   $("sections").replaceChildren();
   inputs = new Map();
@@ -181,6 +264,12 @@ function render() {
       input.setAttribute("aria-description", field.description);
     }
     input.addEventListener("input", refresh);
+    input.addEventListener("input", cancelQueuedAutosave);
+    input.addEventListener("change", requestAutosave);
+    input.addEventListener("keydown", event => {
+      if (event.key === "Enter") { event.preventDefault(); requestAutosave(); }
+    });
+    attachHelp(label, field.help, field.label, input);
     inputs.set(field.id, input);
     row.append(label, input);
     fieldRows.set(field.id, row);
@@ -198,6 +287,7 @@ function render() {
     const reason = document.createElement("small");
     reason.textContent = field.reason;
     label.append(reason);
+    attachHelp(label, field.help, field.label);
     const value = document.createElement("span");
     value.textContent = String(field.value);
     row.append(label, value);
@@ -209,6 +299,9 @@ function render() {
   $("reset").disabled = false;
   $("filename").textContent = fileName;
   $("details").textContent = `${doc.kind} \u00b7 ${doc.fields.length} editable fields \u00b7 ${doc.readOnlyFields.length} other read-only values \u00b7 original preserved`;
+  $("source-status").textContent = nativeSource
+    ? `Source: ${nativeSource.path}. Loaded version modified ${new Date(nativeSource.modifiedUtc).toLocaleString()}. Verified original backup: ${nativeSource.backupPath}`
+    : "Browser file: no automatic disk backup or in-place saving. Download an original backup and export a copy.";
   renderItems();
   renderVehicles();
   selectSection(activeSection);
@@ -216,6 +309,7 @@ function render() {
 }
 
 function selectSection(sectionId) {
+  hideHelp();
   activeSection = sectionId;
   for (const tab of $("sections").querySelectorAll('[role="tab"]')) {
     const selected = tab.id === `tab-${sectionId}`;
@@ -227,6 +321,8 @@ function selectSection(sectionId) {
   }
   $("items-panel").hidden = sectionId !== "items";
   $("vehicles-panel").hidden = sectionId !== "vehicles";
+  $("player-actions").hidden = sectionId !== "player";
+  $("maximize-player").disabled = saving && !savingAutomatically || !doc?.fields.some(field => field.section === "player");
   $("fields").hidden = !doc || ![...doc.fields, ...doc.readOnlyFields].some(field => field.section === sectionId && (sectionId !== "items" || !itemFieldIds.has(field.id)));
   if (sectionId === "items") renderItemEditor();
   else restoreItemFields();
@@ -261,6 +357,7 @@ function renderItemEditor() {
   for (const field of item.readOnlyFields) {
     const term = document.createElement("dt");
     term.textContent = `${field.name}: ${field.value}`;
+    attachHelp(term, field.help, field.name);
     const detail = document.createElement("dd");
     detail.textContent = field.reason;
     $("item-read-only").append(term, detail);
@@ -269,7 +366,7 @@ function renderItemEditor() {
 }
 
 function selectItem(itemId) {
-  if (saving) return;
+  if (saving && !savingAutomatically) return;
   selectedItemId = itemId;
   selectSection("items");
   $("item-editor").scrollIntoView({ block: "nearest" });
@@ -277,11 +374,42 @@ function selectItem(itemId) {
   (inputs.get(item?.fieldIds[0]) || $("item-editor-title")).focus({ preventScroll: true });
 }
 
+function itemSummary(item) {
+  const values = [];
+  if (item.quantity !== null) values.push(`Quantity: ${item.quantity}`);
+  if (item.condition !== null) values.push(`Condition: ${numericText(item.condition)}%`);
+  if (item.ammo !== null) values.push(`Item ammo: ${item.ammo}`);
+  if (item.liquid) values.push(`Liquid: ${numericText(item.liquid.value)} / ${numericText(item.liquid.capacity)} (saved units)`);
+  if (item.loadedAmmo) values.push(`Loaded rounds (${item.loadedAmmo.fieldId}; ${item.loadedAmmo.scope}): ${item.loadedAmmo.value}`);
+  return values.length ? values.join(" · ") : item.readOnlyFields.length
+    ? `${item.readOnlyFields.length} saved scalar value${item.readOnlyFields.length === 1 ? "" : "s"} (read-only)`
+    : "No supported scalar record";
+}
+function vehiclePartsSummary(vehicle) {
+  return vehicle.parts.length ? vehicle.parts.map(part => {
+    const role = part.attachedTo?.split(" · ")[1] || "Component";
+    const condition = part.condition === null ? "condition not saved" : `${numericText(part.condition)}% condition`;
+    return `${role}: ${part.displayName} · ${condition}`;
+  }).join("; ") : "No component mount references matched.";
+}
+function updateSavedSummaries() {
+  for (const item of doc.items) {
+    const row = itemRows.get(item.id);
+    if (row) row.summary.textContent = itemSummary(item);
+  }
+  for (const vehicle of doc.vehicles) {
+    const row = vehicleSummaryRows.get(vehicle.id);
+    if (!row) continue;
+    row.fuel.textContent = vehicle.fuel ? `${numericText(vehicle.fuel.value)} / ${numericText(vehicle.fuel.capacity)} L` : "Fuel not safely mapped";
+    row.parts.textContent = vehiclePartsSummary(vehicle);
+  }
+}
 function renderItems() {
   const rows = $("item-rows");
   rows.replaceChildren();
   itemRows = new Map();
   $("item-filter").value = "";
+  $("editable-only").checked = preferences.editableOnly;
   const itemCount = doc.items.length;
   const unparented = doc.items.filter(item => item.parentRef === null).length;
   const associated = doc.items.filter(item => item.associatedVehicle).length;
@@ -303,6 +431,7 @@ function renderItems() {
   for (const item of doc.items) {
     const row = document.createElement("tr");
     row.dataset.search = `${item.name} ${item.ref || ""} ${item.location} ${item.parentRef || ""}`.toLowerCase();
+    row.dataset.editable = String(item.fieldIds.length > 0);
     const name = document.createElement("td");
     name.textContent = item.displayName;
     const savedId = document.createElement("small");
@@ -331,15 +460,9 @@ function renderItems() {
       instance.append(tag);
     }
     const savedValues = document.createElement("td");
-    const values = [];
-    if (item.quantity !== null) values.push(`Quantity: ${item.quantity}`);
-    if (item.condition !== null) values.push(`Condition: ${numericText(item.condition)}%`);
-    if (item.ammo !== null) values.push(`Item ammo: ${item.ammo}`);
-    if (item.liquid) values.push(`Liquid: ${numericText(item.liquid.value)} / ${numericText(item.liquid.capacity)} (saved units)`);
-    if (item.loadedAmmo) values.push(`Loaded rounds (${item.loadedAmmo.fieldId}; ${item.loadedAmmo.scope}): ${item.loadedAmmo.value}`);
-    savedValues.textContent = values.length ? values.join(" · ") : item.readOnlyFields.length
-      ? `${item.readOnlyFields.length} saved scalar value${item.readOnlyFields.length === 1 ? "" : "s"} (read-only)`
-      : "No supported scalar record";
+    const summary = document.createElement("span");
+    summary.textContent = itemSummary(item);
+    savedValues.append(summary);
     const edit = document.createElement("button");
     edit.type = "button";
     edit.className = "item-action";
@@ -349,7 +472,7 @@ function renderItems() {
     edit.setAttribute("aria-expanded", String(item.id === selectedItemId));
     edit.addEventListener("click", () => selectItem(item.id));
     savedValues.append(edit);
-    itemRows.set(item.id, { row, button: edit });
+    itemRows.set(item.id, { row, button: edit, summary });
     row.append(name, location, instance, savedValues);
     rows.append(row);
   }
@@ -360,17 +483,18 @@ function filterItems() {
   const term = $("item-filter").value.trim().toLowerCase();
   let visible = 0;
   for (const { row } of itemRows.values()) {
-    row.hidden = !row.dataset.search.includes(term);
+    row.hidden = !row.dataset.search.includes(term) || ($("editable-only").checked && row.dataset.editable !== "true");
     if (!row.hidden) visible++;
   }
   $("item-filter-status").textContent = visible
-    ? `${visible} of ${doc.items.length} items shown. Select Edit values or Inspect.`
-    : term ? "No items match this filter. Clear it to see all saved items; your selected item's drafts are kept." : "No saved item instances.";
+    ? `Showing ${visible} of ${doc.items.length} items. Select Edit values or Inspect.`
+    : doc.items.length ? `Showing 0 of ${doc.items.length} items. No items match these filters. Clear the text filter or turn off editable-only; drafts are kept.` : "No saved item instances (0 total).";
 }
 
 function renderVehicles() {
   const rows = $("vehicle-rows");
   rows.replaceChildren();
+  vehicleSummaryRows = new Map();
   $("vehicle-action-status").textContent = "";
   const select = $("vehicle-select");
   const previousSelection = select.value;
@@ -401,24 +525,28 @@ function renderVehicles() {
     const name = document.createElement("td");
     name.textContent = vehicle.name;
     const fuel = document.createElement("td");
-    fuel.textContent = vehicle.fuel ? `${numericText(vehicle.fuel.value)} / ${numericText(vehicle.fuel.capacity)} L` : "Fuel not safely mapped";
+    const fuelSummary = document.createElement("span");
+    fuelSummary.textContent = vehicle.fuel ? `${numericText(vehicle.fuel.value)} / ${numericText(vehicle.fuel.capacity)} L` : "Fuel not safely mapped";
+    fuel.append(fuelSummary);
     if (vehicle.warnings.length) {
       const warning = document.createElement("small");
       warning.textContent = vehicle.warnings.join(" ");
       fuel.append(warning);
     }
     const parts = document.createElement("td");
-    if (vehicle.parts.length) {
-      parts.textContent = vehicle.parts.map(part => {
-        const role = part.attachedTo?.split(" · ")[1] || "Component";
-        const condition = part.condition === null ? "condition not saved" : `${numericText(part.condition)}% condition`;
-        return `${role}: ${part.displayName} · ${condition}`;
-      }).join("; ");
-    } else parts.textContent = "No component mount references matched.";
+    const partsSummary = document.createElement("span");
+    partsSummary.textContent = vehiclePartsSummary(vehicle);
+    parts.append(partsSummary);
+    vehicleSummaryRows.set(vehicle.id, { fuel: fuelSummary, parts: partsSummary });
     const reference = document.createElement("td");
     const code = document.createElement("code");
     code.textContent = vehicle.ref || "Reference unavailable";
     reference.append(code);
+    attachHelp(fuel, vehicle.fuel
+      ? "Saved vehicle Liquid / LiquidCapacity in the game's displayed liters. More fuel means more available fuel; capacity bounds edits. This table shows the last saved baseline; staged edits appear in the fields and Review."
+      : `Read-only: no verified fuel/capacity mapping for this vehicle. ${vehicle.warnings.join(" ")} No capacity is inferred.`, `${vehicle.name} fuel`);
+    attachHelp(parts, "Only exact saved parent-to-mount matches are listed here. Condition is percent, with 100 healthy; absence is not zero. No separate vehicle-body damage scalar was found. Storage/association alone does not qualify for repair.", `${vehicle.name} components`);
+    attachHelp(reference, "Exact saved ES3 object reference. Read-only: changing references could break object links. It does not establish player ownership.", `${vehicle.name} reference`);
     row.append(name, fuel, parts, reference);
     rows.append(row);
   }
@@ -439,6 +567,7 @@ function updateVehicleActions() {
   const fields = vehicleActionFields(selectedVehicle());
   $("repair-vehicle").disabled = saving || !fields.some(field => field.id.endsWith(":Condition"));
   $("topoff-vehicle").disabled = saving || !fields.some(field => field.id.endsWith(":fuel"));
+  $("all-vehicles").disabled = saving || !doc?.vehicles.some(vehicle => vehicle.fieldIds.length);
 }
 
 function stageVehicleAction(action) {
@@ -462,6 +591,7 @@ function stageVehicleAction(action) {
       ? `${result.skippedInvalid} invalid target field${result.skippedInvalid === 1 ? " was" : "s were"} left unchanged. Correct it before staging this action.`
       : `No eligible ${action === "repair" ? "component condition" : "fuel"} values needed updating for ${vehicle?.name || "the selected vehicle"}.`;
   updateVehicleActions();
+  requestAutosave();
 }
 
 $("fields").addEventListener("submit", event => event.preventDefault());
@@ -476,7 +606,33 @@ $("sections").addEventListener("keydown", event => {
   selectSection(doc.sections[next].id);
 });
 $("item-filter").addEventListener("input", filterItems);
-async function openFile(file) {
+$("editable-only").addEventListener("change", () => {
+  preferences.editableOnly = $("editable-only").checked;
+  saveAppearance();
+  filterItems();
+});
+function cancelQueuedAutosave() {
+  clearTimeout(autosaveTimer);
+  autosaveTimer = null;
+  autosaveRequested = false;
+}
+function requestAutosave() {
+  refresh();
+  if (!preferences.autosave || autosaveFailed || !nativeSource?.canSave || !nativeSource.backupPath) return;
+  autosaveRequested = true;
+  clearTimeout(autosaveTimer);
+  if (saving) return;
+  autosaveTimer = setTimeout(() => { autosaveTimer = null; void saveDocument(true); }, 350);
+}
+$("autosave").addEventListener("change", () => {
+  preferences.autosave = $("autosave").checked;
+  autosaveFailed = false;
+  cancelQueuedAutosave();
+  saveAppearance();
+  refresh();
+  if (preferences.autosave) requestAutosave();
+});
+async function openFile(file, source = null) {
   if (!file) return false;
   if (saving) {
     message("Wait for the current save operation to finish before opening another file.");
@@ -495,7 +651,9 @@ async function openFile(file) {
     doc = next;
     originalBytes = bytes;
     fileName = file.name;
-    nativeSource = null;
+    cancelQueuedAutosave();
+    autosaveFailed = false;
+    nativeSource = source;
     selectedItemId = null;
     render();
     return true;
@@ -508,33 +666,37 @@ $("file").addEventListener("change", async event => {
   await openFile(event.target.files[0]);
   event.target.value = "";
 });
-$("native-picker").addEventListener("click", async () => {
-  if (saving) return;
+async function bridgeStatus() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch("/api/status", { method: "POST", headers: { "X-Editor-Token": pickerToken }, signal: controller.signal });
+    if (!response.ok) throw new Error("This native bridge is unavailable or outdated. Relaunch run.bat and use its newly opened page.");
+    const status = await response.json();
+    if (status.protocolVersion !== 3) throw new Error("This page is connected to an older native bridge. Relaunch run.bat and use its newly opened page.");
+    if (!status.folderExists) throw new Error(`The current user's Apocalypter save folder does not exist: ${status.saveFolder}`);
+    return status;
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error('The native bridge did not respond within 5 seconds. Check for an already open "Choose an Apocalypter save" dialog, or relaunch run.bat and use its newly opened page.');
+    throw error;
+  } finally { clearTimeout(timeout); }
+}
+async function openNative(latest = false) {
+  if (saving || openingNative) return;
+  openingNative = true;
+  cancelQueuedAutosave();
   const button = $("native-picker");
   button.disabled = true;
+  $("file").disabled = true;
   button.textContent = "Checking native bridge...";
   $("picker-hint").textContent = "Checking the local launcher's connection before opening the Windows dialog.";
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    let status;
-    try {
-      const readiness = await fetch("/api/status", {
-        method: "POST",
-        headers: { "X-Editor-Token": pickerToken },
-        signal: controller.signal
-      });
-      if (!readiness.ok) throw new Error("This native bridge is unavailable or outdated. Relaunch run.bat and use its newly opened page.");
-      status = await readiness.json();
-    } catch (error) {
-      if (error.name === "AbortError") throw new Error('The native bridge did not respond within 5 seconds. Check for an already open "Choose an Apocalypter save" dialog, or relaunch run.bat and use its newly opened page.');
-      throw error;
-    } finally { clearTimeout(timeout); }
-    if (status.protocolVersion !== 2) throw new Error("This page is connected to an older native bridge. Relaunch run.bat and use its newly opened page.");
-    if (!status.folderExists) throw new Error(`The current user's Apocalypter save folder does not exist: ${status.saveFolder}`);
-    button.textContent = "Waiting for Windows dialog...";
-    $("picker-hint").textContent = `Windows picker requested for ${status.saveFolder}. Select a file or cancel in "Choose an Apocalypter save"; check the taskbar if necessary.`;
-    const response = await fetch("/api/pick", {
+    const status = await bridgeStatus();
+    button.textContent = latest ? "Opening newest slot..." : "Waiting for Windows dialog...";
+    $("picker-hint").textContent = latest
+      ? `Opening the most recently modified SaveGameN.es3 in ${status.saveFolder} and verifying its backup.`
+      : `Windows picker requested for ${status.saveFolder}. Select a file or cancel in "Choose an Apocalypter save"; check the taskbar if necessary.`;
+    const response = await fetch(latest ? "/api/latest" : "/api/pick", {
       method: "POST",
       headers: { "X-Editor-Token": pickerToken }
     });
@@ -546,49 +708,94 @@ $("native-picker").addEventListener("click", async () => {
     }
     const binary = atob(result.contentBase64);
     const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
-    const loaded = await openFile(new File([bytes], result.name, { type: "application/octet-stream" }));
+    if (!result.source?.backupPath) throw new Error("The native bridge did not verify an original backup. Relaunch run.bat; editing is unavailable for this response.");
+    const loaded = await openFile(new File([bytes], result.name, { type: "application/octet-stream" }), result.source);
     if (loaded) {
-      nativeSource = result.source || null;
       refresh();
       $("picker-hint").textContent = nativeSource?.canSave
-        ? `Loaded ${result.name}. Save changes can back up and replace ${nativeSource.path} after confirmation.`
+        ? `Loaded ${result.name}; original backup verified at ${nativeSource.backupPath}. Manual Save asks before overwriting.`
         : `Loaded ${result.name}. Saving in place needs Node.js 18 or newer; export remains available.`;
     }
-    else if (!pending()) $("picker-hint").textContent = "The selected file was not opened; the current save is unchanged.";
+    else if (!pending()) $("picker-hint").textContent = "The selected file was not opened. No older slot was selected; choose a file manually.";
   } catch (error) {
-    message(`Save picker failed: ${error.message}`);
+    message(`${latest ? "Automatic opening" : "Save picker"} failed: ${error.message}`);
     $("browser-picker-controls").hidden = false;
-    $("picker-hint").textContent = "The native picker failed. Use the browser chooser below or relaunch with run.bat.";
+    $("picker-hint").textContent = "Choose a file manually, use the limited browser chooser, or relaunch with run.bat. No older slot was selected automatically.";
   } finally {
+    openingNative = false;
     button.disabled = false;
+    $("file").disabled = false;
     button.textContent = "Choose File";
+    if (doc?.fields) {
+      const feedback = $("message").textContent;
+      refresh();
+      if (feedback) message(feedback);
+    }
   }
+}
+$("native-picker").addEventListener("click", () => openNative());
+window.addEventListener("DOMContentLoaded", () => {
+  if (pickerToken && location.protocol === "http:" && location.hostname === "127.0.0.1") void openNative(true);
 });
 $("vehicle-select").addEventListener("change", updateVehicleActions);
 $("repair-vehicle").addEventListener("click", () => stageVehicleAction("repair"));
 $("topoff-vehicle").addEventListener("click", () => stageVehicleAction("topoff"));
-$("save").addEventListener("click", async () => {
+function readDraft(field) {
+  const input = inputs.get(field.id);
+  return { value: input?.value, invalid: input?.getAttribute("aria-invalid") === "true" };
+}
+function writeDraft(field, value) { inputs.get(field.id).value = value; }
+$("maximize-player").addEventListener("click", () => {
+  if (!doc || (saving && !savingAutomatically)) return;
+  refresh();
+  const result = ApocalypterVehicleActions.maximize(doc.fields, readDraft, writeDraft, ApocalypterSave.validate);
+  refresh();
+  $("player-action-status").textContent = `Maximize all staged ${result.staged} values: editable health, armor and supplies to 100; Hunger, Thirst, Fatigue and Radiation to 0. Read-only values were untouched.${result.skipped.length ? ` Could not set: ${result.skipped.join(", ")} (invalid draft or unsupported target).` : ""}`;
+  requestAutosave();
+});
+$("all-vehicles").addEventListener("click", () => {
+  if (!doc || saving) return;
+  refresh();
+  const result = ApocalypterVehicleActions.all(doc.vehicles, doc.fields, readDraft, writeDraft, ApocalypterSave.validate);
+  refresh();
+  $("vehicle-action-status").textContent = `All vehicles: staged ${result.staged} verified repair/fuel values. ${result.missingRepair} vehicles had no verified repair target; ${result.missingFuel} had no verified tank. ${result.skippedInvalid} invalid target drafts were left unchanged. Unrelated and read-only values were untouched.`;
+  requestAutosave();
+});
+async function saveDocument(automatic = false) {
+  if (saving || openingNative) return;
   refresh();
   if ($("save").disabled) return;
+  if (automatic && (!preferences.autosave || autosaveFailed || !autosaveRequested || !nativeSource?.backupPath)) return;
   const source = nativeSource;
-  if (!window.confirm(`Overwrite this save?\n\n${source.path}\n\nAn automatic, uniquely named backup of its current bytes will be created beside it before replacement. Close the game first. Cancel makes no changes.`)) return;
+  if (!automatic) {
+    cancelQueuedAutosave();
+    if (!window.confirm(`Overwrite this save?\n\n${source.path}\n\nIts current bytes will be backed up before replacement (an identical verified load-time backup may be reused). Close the game first. Cancel makes no changes.`)) {
+      message("Save canceled; queued writes were canceled and drafts remain staged.");
+      return;
+    }
+  }
+  const submitted = new Map(changes);
+  cancelQueuedAutosave();
   saving = true;
+  savingAutomatically = automatic;
   ++readGeneration;
-  $("save").textContent = "Saving...";
-  $("fields").inert = true;
-  $("items-panel").inert = true;
+  for (const id of saveButtons) $(id).textContent = "Saving...";
+  $("fields").inert = !automatic;
+  $("items-panel").inert = !automatic;
   $("native-picker").disabled = true;
   $("file").disabled = true;
   $("reset").disabled = true;
   $("vehicle-select").disabled = true;
   $("repair-vehicle").disabled = true;
   $("topoff-vehicle").disabled = true;
+  $("all-vehicles").disabled = true;
+  $("maximize-player").disabled = !automatic;
   refresh();
   try {
     const response = await fetch("/api/save", {
       method: "POST",
       headers: { "X-Editor-Token": pickerToken, "Content-Type": "application/json" },
-      body: JSON.stringify({ handle: source.handle, changes: Object.fromEntries(changes), confirmed: true })
+      body: JSON.stringify({ handle: source.handle, changes: Object.fromEntries(submitted), confirmed: true, ...(automatic ? { autosave: true } : {}) })
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || `Save failed (${response.status}).`);
@@ -600,26 +807,36 @@ $("save").addEventListener("click", async () => {
     const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
     doc = ApocalypterSave.inspect(text);
     originalBytes = bytes;
-    render();
-    message(`Saved ${source.path}. Backup: ${result.backupPath}`);
+    if (!automatic) render();
+    else { updateSavedSummaries(); refresh(); }
+    if (automatic) $("autosave-status").textContent = `Autosaved ${new Date().toLocaleTimeString()}. ${source.path}`;
+    else message(`Saved ${source.path}. Backup: ${result.backupPath}`);
   } catch (error) {
+    if (automatic) { autosaveFailed = true; autosaveFailureMessage = error.message; cancelQueuedAutosave(); }
     message(`Save failed: ${error.message} Pending edits remain available. If the connection failed after writing, reopen the file to check its current state before retrying.`);
   } finally {
     saving = false;
-    $("save").textContent = "Save changes";
+    savingAutomatically = false;
+    for (const id of saveButtons) $(id).textContent = id === "save" ? "Save changes" : "Save";
     $("fields").inert = false;
     $("items-panel").inert = false;
     $("native-picker").disabled = false;
     $("file").disabled = false;
     $("reset").disabled = !doc;
     $("vehicle-select").disabled = false;
+    $("maximize-player").disabled = !doc?.fields.some(field => field.section === "player");
     updateVehicleActions();
-    $("save").disabled = !changes.size || !source.canSave || [...inputs.values()].some(input => input.getAttribute("aria-invalid") === "true");
+    const disabled = !changes.size || !source.canSave || [...inputs.values()].some(input => input.getAttribute("aria-invalid") === "true");
+    for (const id of saveButtons) $(id).disabled = disabled;
+    if (automatic && autosaveFailed) $("autosave-status").textContent = `Autosave stopped after an error: ${autosaveFailureMessage}. Drafts are kept; turn it off and on only after resolving the error.`;
+    if (autosaveRequested && preferences.autosave && !autosaveFailed) requestAutosave();
   }
-});
+}
+for (const id of saveButtons) $(id).addEventListener("click", () => saveDocument());
 $("backup").addEventListener("click", () => download(originalBytes, `${fileName}.original.bak`));
 $("reset").addEventListener("click", () => {
   if (pending() && !window.confirm("Reset all pending changes to the opened original?")) return;
+  cancelQueuedAutosave();
   render();
 });
 $("export").addEventListener("click", () => {
@@ -632,5 +849,22 @@ $("export").addEventListener("click", () => {
   } catch (error) { message(`Export failed: ${error.message}`); }
 });
 window.addEventListener("beforeunload", event => {
-  if (pending()) { event.preventDefault(); event.returnValue = ""; }
+  if (saving || pending()) { event.preventDefault(); event.returnValue = ""; }
 });
+for (const [id, text] of [
+  ["theme-toggle", "Changes only this editor's light/dark appearance. It does not change save data."],
+  ["season-select", "Selects this editor's seasonal color palette. It does not change the game's weather or season."],
+  ["autosave", "Consent to overwrite the exact native-opened file after each committed valid change, without a separate prompt. A verified load-time backup is required. Invalid drafts pause saving; errors stop automatic retries. Turning it off keeps pending drafts."],
+  ["editable-only", "Shows only item instances with at least one currently editable field. Combines with text search; hidden items and their drafts are not deleted."],
+  ["maximize-player", "Stages editable Player & supplies values to exactly 100, except Hunger, Thirst, Fatigue and Radiation to 0. This can lower ammo values above 100. Read-only fields and invalid target drafts are skipped."],
+  ["all-vehicles", "Stages the same verified component repairs and tank top-offs as the selected-vehicle actions, across all vehicles. Unknown parts, storage associations and invalid target drafts are skipped."],
+  ["repair-vehicle", "Stages this selected vehicle's reference-matched component Condition values to 100%. It does not repair unlinked or stored spare parts."],
+  ["topoff-vehicle", "Stages this selected vehicle's Liquid amount to its verified saved tank capacity. Missing/invalid fuel mappings are skipped."]
+]) {
+  const element = $(id);
+  const container = document.createElement("span");
+  container.className = "control-help";
+  if (element.type === "checkbox") element.parentNode.append(container);
+  else element.insertAdjacentElement("afterend", container);
+  attachHelp(container, text, element.getAttribute("aria-label") || element.textContent || id, element);
+}

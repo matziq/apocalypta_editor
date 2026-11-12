@@ -6,8 +6,9 @@ const path = require("node:path");
 const vm = require("node:vm");
 const Preferences = require("../ui-preferences.js");
 const Save = require("../save-format.js");
+const VehicleActions = require("../vehicle-actions.js");
 
-function app({ stored = null, pickerResult, pickerError, native = true, confirm = () => true, fetchResponse } = {}) {
+function app({ stored = null, pickerResult, pickerError, native = true, confirm = () => true, fetchResponse, timers = false } = {}) {
   const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
   const element = () => ({
     textContent: "",
@@ -35,14 +36,22 @@ function app({ stored = null, pickerResult, pickerError, native = true, confirm 
     },
     focus() { this.focused = true; },
     scrollIntoView() {},
+    insertAdjacentElement(position, node) { this.parentNode.append(node); },
     querySelectorAll: () => [],
     setAttribute(name, value) { this.attributes.set(name, value); },
     removeAttribute(name) { this.attributes.delete(name); },
     getAttribute(name) { return this.attributes.get(name) || null; },
-    addEventListener(name, callback) { this.events[name] = callback; }
+    addEventListener(name, callback) {
+      const previous = this.events[name];
+      this.events[name] = previous ? async (...args) => { await previous(...args); return callback(...args); } : callback;
+    }
   });
   const elements = new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(([, id]) => [id, element()]));
+  for (const node of elements.values()) node.parentNode = element();
   const fetches = [];
+  const windowEvents = {};
+  const scheduled = new Map();
+  let timerId = 0;
   const storage = {
     getItem: () => stored,
     setItem: (key, value) => { stored = value; }
@@ -59,29 +68,36 @@ function app({ stored = null, pickerResult, pickerError, native = true, confirm 
     },
     window: {
       matchMedia: () => ({ matches: false, addEventListener() {} }),
-      addEventListener() {},
+      addEventListener(name, callback) { windowEvents[name] = callback; },
       confirm
     },
     location: { protocol: native ? "http:" : "file:", hostname: native ? "127.0.0.1" : "" },
     localStorage: storage,
     ApocalypterUi: Preferences,
     ApocalypterSave: Save,
+    ApocalypterVehicleActions: VehicleActions,
+    File,
     TextDecoder,
     TextEncoder,
     atob,
     AbortController,
-    setTimeout,
-    clearTimeout,
+    setTimeout: timers ? callback => { scheduled.set(++timerId, callback); return timerId; } : setTimeout,
+    clearTimeout: timers ? id => scheduled.delete(id) : clearTimeout,
     fetch: async (url, init) => {
       fetches.push({ url, init });
       if (fetchResponse) return fetchResponse(url, init);
-      if (url === "/api/status") return { ok: true, json: async () => ({ protocolVersion: 2, folderExists: true, saveFolder: "C:\\Synthetic\\Apocalypter" }) };
+      if (url === "/api/status") return { ok: true, json: async () => ({ protocolVersion: 3, folderExists: true, saveFolder: "C:\\Synthetic\\Apocalypter" }) };
       if (pickerError) throw pickerError;
       return { ok: !pickerResult?.error, status: pickerResult?.error ? 404 : 200, json: async () => pickerResult };
     }
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8"), context);
-  return { elements, context, fetches, stored: () => stored };
+  return { elements, context, fetches, windowEvents, stored: () => stored, async flushTimers() {
+    const callbacks = [...scheduled.values()];
+    scheduled.clear();
+    for (const callback of callbacks) await callback();
+    await new Promise(resolve => setImmediate(resolve));
+  } };
 }
 
 test("malformed preferences cannot prevent file-picker event binding", () => {
@@ -151,6 +167,258 @@ function seedNativeEdit(ui) {
     inputs.get("peacefulMode").checked = true;
   `, ui.context);
 }
+
+const pm = objs => ({ __type: "ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass", value: { objs } });
+const scalar = value => ({ __type: "float", value });
+const healthText = value => JSON.stringify({ Player: pm({ Health: scalar(value) }) });
+function nativeFixture(ui, text = healthText(100)) {
+  vm.runInContext(`doc = ApocalypterSave.inspect(${JSON.stringify(text)}); originalBytes = new TextEncoder().encode(doc.text); fileName = "SaveGame1.es3";
+    nativeSource = { handle: "opaque", path: "C:\\\\Synthetic\\\\SaveGame1.es3", canSave: true, backupPath: "C:\\\\Synthetic\\\\load.original.bak", modifiedUtc: "2026-01-01T00:00:00Z" }; render();`, ui.context);
+}
+function draft(ui, id) { return vm.runInContext(`inputs.get(${JSON.stringify(id)})`, ui.context); }
+function deferred() {
+  let resolve;
+  const promise = new Promise(done => { resolve = done; });
+  return { promise, resolve };
+}
+function saveReply(text) {
+  return { ok: true, json: async () => ({ contentBase64: Buffer.from(text).toString("base64"), backupPath: "C:\\Synthetic\\load.original.bak" }) };
+}
+async function commitInput(ui, id, value) {
+  const input = draft(ui, id);
+  input.value = value;
+  await input.events.input();
+  await input.events.change();
+}
+
+test("native startup autoload adopts backed-up source; standalone startup never requests a file", async () => {
+  const text = healthText(50);
+  const ui = app({ pickerResult: { name: "SaveGame2.es3", contentBase64: Buffer.from(text).toString("base64"), source: {
+    handle: "opened", path: "C:\\Synthetic\\SaveGame2.es3", canSave: true, backupPath: "C:\\Synthetic\\original.bak", modifiedUtc: "2026-01-01T00:00:00Z"
+  } } });
+  ui.windowEvents.DOMContentLoaded();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(ui.fetches.map(request => request.url), ["/api/status", "/api/latest"]);
+  assert.equal(vm.runInContext("nativeSource.handle", ui.context), "opened");
+  assert.match(ui.elements.get("source-status").textContent, /SaveGame2.*original\.bak/);
+  assert.equal(ui.elements.get("autosave").checked, false);
+  const standalone = app({ native: false });
+  standalone.windowEvents.DOMContentLoaded();
+  assert.equal(standalone.fetches.length, 0);
+});
+
+test("latest-load failure or missing verified backup leaves editing unavailable and chooser visible", async () => {
+  for (const result of [{ error: "Newest slot invalid; no older slot selected." }, { name: "SaveGame1.es3", source: {} }]) {
+    const ui = app({ pickerResult: result });
+    await vm.runInContext("openNative(true)", ui.context);
+    assert.equal(vm.runInContext("doc", ui.context), null);
+    assert.match(ui.elements.get("message").textContent, /failed:/);
+    assert.equal(ui.elements.get("native-picker").disabled, false);
+  }
+});
+
+test("autosave serializes delayed writes, coalesces committed edits, and retains newer drafts", async () => {
+  const replies = [deferred(), deferred()];
+  const payloads = [];
+  const ui = app({ timers: true, confirm: () => { throw Error("Autosave must not prompt"); }, fetchResponse: async (url, init) => {
+    assert.equal(url, "/api/save");
+    payloads.push(JSON.parse(init.body));
+    return replies[payloads.length - 1].promise;
+  } });
+  nativeFixture(ui);
+  ui.elements.get("autosave").checked = true;
+  ui.elements.get("autosave").events.change();
+  await commitInput(ui, "Player.Health", 90);
+  await ui.flushTimers();
+  assert.equal(payloads.length, 1);
+  await commitInput(ui, "Player.Health", 80);
+  await commitInput(ui, "Player.Health", 70);
+  await ui.flushTimers();
+  assert.equal(payloads.length, 1, "Only one request may be in flight");
+  replies[0].resolve(saveReply(healthText(90)));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(draft(ui, "Player.Health").value, "70");
+  assert.equal(vm.runInContext("doc.fields[0].value", ui.context), 90);
+  await ui.flushTimers();
+  assert.equal(payloads.length, 2);
+  assert.deepEqual(payloads[1].changes, { "Player.Health": 70 });
+  assert.equal(payloads[1].autosave, true);
+  replies[1].resolve(saveReply(healthText(70)));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(vm.runInContext("changes.size", ui.context), 0);
+  assert.match(ui.elements.get("autosave-status").textContent, /Autosaved/);
+  assert.equal(JSON.parse(ui.stored()).autosave, true);
+});
+
+test("autosave never saves invalid or uncommitted drafts, including during delayed writes", async () => {
+  const reply = deferred();
+  let requests = 0;
+  const ui = app({ timers: true, fetchResponse: async () => ++requests === 1 ? reply.promise : saveReply(healthText(80)) });
+  nativeFixture(ui);
+  ui.elements.get("autosave").checked = true;
+  ui.elements.get("autosave").events.change();
+  await commitInput(ui, "Player.Health", 101);
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 0);
+  assert.match(ui.elements.get("autosave-status").textContent, /paused/);
+  await commitInput(ui, "Player.Health", 90);
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 1);
+  await commitInput(ui, "Player.Health", -1);
+  reply.resolve(saveReply(healthText(90)));
+  await new Promise(resolve => setImmediate(resolve));
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 1);
+  assert.equal(draft(ui, "Player.Health").value, "-1");
+  assert.equal(draft(ui, "Player.Health").getAttribute("aria-invalid"), "true");
+  const pending = draft(ui, "Player.Health");
+  pending.value = "80";
+  await pending.events.input();
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 1, "Keystrokes alone must never save");
+  await pending.events.change();
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 2);
+  assert.equal(vm.runInContext("changes.size", ui.context), 0);
+});
+
+test("delayed autosave refreshes item and vehicle baselines without replacing controls or newer drafts", async () => {
+  const reply = deferred();
+  const ui = app({ timers: true, fetchResponse: async () => reply.promise });
+  seedWorldItems(ui, true);
+  const text = ui.context.worldText;
+  nativeFixture(ui, text);
+  vm.runInContext('selectItem(doc.items[0].id);', ui.context);
+  const id = vm.runInContext("doc.items[0].fieldIds[0]", ui.context);
+  const input = draft(ui, id);
+  ui.elements.get("item-filter").value = "engine";
+  ui.elements.get("item-filter").events.input();
+  ui.elements.get("autosave").checked = true; ui.elements.get("autosave").events.change();
+  await commitInput(ui, id, 90);
+  await ui.flushTimers();
+  input.value = "70";
+  await input.events.input();
+  reply.resolve(saveReply(Save.serialize(text, { [id]: 90 })));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(draft(ui, id), input);
+  assert.equal(input.value, "70");
+  assert.equal(ui.elements.get("item-filter").value, "engine");
+  assert.equal(vm.runInContext("selectedItemId === doc.items[0].id", ui.context), true);
+  assert.match(vm.runInContext("itemRows.get(doc.items[0].id).summary.textContent", ui.context), /90%/);
+  assert.match(vm.runInContext("vehicleSummaryRows.get(doc.vehicles[0].id).parts.textContent", ui.context), /90%/);
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 1, "The newer uncommitted draft must stay unsaved");
+});
+
+test("unchecking autosave cancels queued writes; failures latch without automatic retries", async () => {
+  const ui = app({ timers: true, fetchResponse: async () => ({ ok: false, json: async () => ({ error: "stale source" }) }) });
+  nativeFixture(ui);
+  const toggle = ui.elements.get("autosave");
+  toggle.checked = true; toggle.events.change();
+  await commitInput(ui, "Player.Health", 80);
+  toggle.checked = false; toggle.events.change();
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 0);
+  toggle.checked = true; toggle.events.change();
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 1);
+  await commitInput(ui, "Player.Health", 70);
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 1);
+  assert.equal(draft(ui, "Player.Health").value, "70");
+  assert.match(ui.elements.get("autosave-status").textContent, /stopped after an error/);
+});
+
+test("player bulk action is one coherent autosave, sets exact values, and preserves protected data", async () => {
+  const text = JSON.stringify({ Player: pm({ Health: scalar(40) }), Ammo: pm({ armor: scalar(5), ammo_9mm: { __type: "int", value: 250 } }),
+    global: pm({ Hunger: scalar(10), Thirst: scalar(10), Fatigue: scalar(10), Radiation: scalar(10), Money: scalar(39), Sanity: scalar(-27) }) });
+  let payload;
+  const ui = app({ timers: true, fetchResponse: async (url, init) => {
+    payload = JSON.parse(init.body);
+    return saveReply(Save.serialize(text, payload.changes));
+  } });
+  nativeFixture(ui, text);
+  ui.elements.get("autosave").checked = true;
+  ui.elements.get("autosave").events.change();
+  ui.elements.get("maximize-player").events.click();
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 1);
+  assert.deepEqual(payload.changes, { "Player.Health": 100, "Ammo.armor": 100, "Ammo.ammo_9mm": 100, "global.Hunger": 0, "global.Thirst": 0, "global.Fatigue": 0, "global.Radiation": 0 });
+  assert.equal(vm.runInContext("doc.readOnlyFields.find(field => field.id === 'global.Money').value", ui.context), 39);
+  assert.equal(vm.runInContext("changes.size", ui.context), 0);
+});
+
+test("all-vehicle bulk action is one coherent autosave with exactly the selected-action targets", async () => {
+  let payload;
+  let text;
+  const ui = app({ timers: true, fetchResponse: async (url, init) => {
+    payload = JSON.parse(init.body);
+    return saveReply(Save.serialize(text, payload.changes));
+  } });
+  seedWorldItems(ui, true);
+  text = ui.context.worldText;
+  nativeFixture(ui, text);
+  ui.elements.get("autosave").checked = true; ui.elements.get("autosave").events.change();
+  ui.elements.get("all-vehicles").events.click();
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 1);
+  assert.deepEqual(payload.changes, { "item:9000:0:Condition": 100, "vehicle:car-1:0:fuel": 20 });
+  assert.equal(ui.elements.get("message").textContent, "");
+  assert.equal(vm.runInContext("doc.items[0].condition", ui.context), 100);
+  assert.match(vm.runInContext("itemRows.get(doc.items[0].id).summary.textContent", ui.context), /100%/);
+  assert.match(vm.runInContext("vehicleSummaryRows.get(doc.vehicles[0].id).fuel.textContent", ui.context), /20 \/ 20/);
+  assert.match(vm.runInContext("vehicleSummaryRows.get(doc.vehicles[0].id).parts.textContent", ui.context), /100%/);
+});
+
+test("editable-only reports zero matches rather than no instances for an all-read-only list", () => {
+  const ui = app();
+  seedWorldItems(ui);
+  vm.runInContext("doc = ApocalypterSave.inspect(JSON.stringify({ ...JSON.parse(worldText), 'engine(Clone)1': {}, 'engine(Clone)2': {} })); render();", ui.context);
+  ui.elements.get("editable-only").checked = true;
+  ui.elements.get("editable-only").events.change();
+  assert.match(ui.elements.get("item-filter-status").textContent, /Showing 0 of 3.*No items match/);
+});
+
+test("editable-only filter combines with search, persists, and keeps hidden drafts", () => {
+  const ui = app();
+  seedWorldItems(ui);
+  vm.runInContext('inputs.get(doc.items[0].fieldIds[0]).value = "91"; refresh();', ui.context);
+  ui.elements.get("editable-only").checked = true;
+  ui.elements.get("editable-only").events.change();
+  ui.elements.get("item-filter").value = "wheel";
+  ui.elements.get("item-filter").events.input();
+  assert.match(ui.elements.get("item-filter-status").textContent, /No items match/);
+  assert.equal(vm.runInContext("changes.get(doc.items[0].fieldIds[0])", ui.context), 91);
+  assert.equal(JSON.parse(ui.stored()).editableOnly, true);
+  ui.elements.get("item-filter").value = "engine";
+  ui.elements.get("item-filter").events.input();
+  assert.match(ui.elements.get("item-filter-status").textContent, /Showing 2 of 3/);
+});
+
+test("all Save buttons share availability, exact destination confirmation, and cancellation", async () => {
+  let confirmations = 0;
+  const ui = app({ confirm: text => { assert.match(text, /C:\\Synthetic\\SaveGame1\.es3/); confirmations++; return false; } });
+  nativeFixture(ui);
+  await commitInput(ui, "Player.Health", 90);
+  for (const id of ["save", "save-top", "save-side"]) {
+    assert.equal(ui.elements.get(id).disabled, false);
+    await ui.elements.get(id).events.click();
+  }
+  assert.equal(confirmations, 3);
+  assert.equal(ui.fetches.length, 0);
+});
+
+test("canceling manual Save also cancels a queued autosave so cancel cannot cause a write", async () => {
+  const ui = app({ timers: true, confirm: () => false });
+  nativeFixture(ui);
+  ui.elements.get("autosave").checked = true; ui.elements.get("autosave").events.change();
+  await commitInput(ui, "Player.Health", 90);
+  await ui.elements.get("save-top").events.click();
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 0);
+  assert.equal(draft(ui, "Player.Health").value, "90");
+  assert.match(ui.elements.get("message").textContent, /canceled.*drafts remain/);
+});
 
 test("canceling overwrite confirmation sends no save request and retains drafts", async () => {
   let prompt;

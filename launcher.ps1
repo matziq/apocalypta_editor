@@ -1,4 +1,4 @@
-param([switch]$SelfTest, [switch]$NoLaunch)
+param([switch]$SelfTest, [switch]$NoLaunch, [string]$SaveFolderOverride)
 
 $ErrorActionPreference = "Stop"
 $maxBytes = 20 * 1024 * 1024
@@ -53,7 +53,7 @@ function Test-PickerRequest {
         [string]$RequestedMethod,
         [string]$RequestedHeaders
     )
-    if ($HostHeader -cne $ExpectedHost -or $Origin -cne $ExpectedOrigin -or $Path -cnotin @("/api/pick", "/api/save", "/api/status")) { return $false }
+    if ($HostHeader -cne $ExpectedHost -or $Origin -cne $ExpectedOrigin -or $Path -cnotin @("/api/pick", "/api/latest", "/api/save", "/api/status")) { return $false }
     if ($Method -ceq "POST") {
         $lengthAllowed = if ($Path -ceq "/api/save") { $ContentLength -gt 0 -and $ContentLength -le 1048576 } else { $ContentLength -eq 0 }
         return $Token -ceq $ExpectedToken -and $lengthAllowed
@@ -67,11 +67,33 @@ function Test-PickerRequest {
 
 function Resolve-OpenedSaveRequest {
     param($Payload, [hashtable]$OpenedFiles)
-    $unknown = @($Payload.PSObject.Properties.Name | Where-Object { $_ -cnotin @("handle", "changes", "confirmed") })
-    if ($unknown.Count -or $Payload.confirmed -isnot [bool] -or $Payload.handle -isnot [string] -or -not $OpenedFiles.ContainsKey($Payload.handle)) {
+    $unknown = @($Payload.PSObject.Properties.Name | Where-Object { $_ -cnotin @("handle", "changes", "confirmed", "autosave") })
+    if ($unknown.Count -or ($null -ne $Payload.autosave -and $Payload.autosave -isnot [bool]) -or $Payload.confirmed -isnot [bool] -or $Payload.handle -isnot [string] -or -not $OpenedFiles.ContainsKey($Payload.handle)) {
         throw "Save request must identify an opened native file; client-supplied paths are not accepted."
     }
     return $OpenedFiles[$Payload.handle]
+}
+
+function Register-OpenedSave {
+    param([string]$Path, [hashtable]$OpenedFiles, [string]$NodePath)
+    $source = Open-BackedUpSave -Path $Path
+    $bytes = $source.Bytes
+    $source.Remove("Bytes")
+    $handle = New-SessionToken
+    if ($OpenedFiles.Count -ge 32) { $OpenedFiles.Remove(@($OpenedFiles.Keys)[0]) }
+    $OpenedFiles[$handle] = $source
+    return @{
+        canceled = $false
+        name = [IO.Path]::GetFileName($source.Path)
+        contentBase64 = [Convert]::ToBase64String($bytes)
+        source = @{
+            handle = $handle
+            path = $source.Path
+            canSave = [bool]$NodePath
+            backupPath = $source.LoadBackup
+            modifiedUtc = $source.ModifiedUtc
+        }
+    }
 }
 
 function New-SessionToken {
@@ -128,8 +150,16 @@ function Write-Response {
         $response.Headers["Access-Control-Allow-Origin"] = $Origin
         $response.Headers["Vary"] = "Origin"
     }
-    $response.OutputStream.Write($Bytes, 0, $Bytes.Length)
-    $response.Close()
+    try {
+        $response.OutputStream.Write($Bytes, 0, $Bytes.Length)
+        $response.Close()
+    } catch [Net.HttpListenerException] {
+        Write-Warning "Browser disconnected before the response completed. If saving was in progress, reopen the file to check it before retrying. $($_.Exception.Message)"
+        $response.Abort()
+    } catch [IO.IOException] {
+        Write-Warning "Response connection failed. If saving was in progress, reopen the file to check it before retrying. $($_.Exception.Message)"
+        $response.Abort()
+    }
 }
 
 function Write-Json {
@@ -165,6 +195,8 @@ if ($SelfTest) {
     if (-not (Test-PickerRequest @valid)) { throw "Authorized picker request was rejected." }
     $statusRequest = $valid.Clone(); $statusRequest.Path = "/api/status"
     if (-not (Test-PickerRequest @statusRequest)) { throw "Authenticated bridge readiness request was rejected." }
+    $latestRequest = $valid.Clone(); $latestRequest.Path = "/api/latest"
+    if (-not (Test-PickerRequest @latestRequest)) { throw "Authenticated latest-slot request was rejected." }
     $invalid = $valid.Clone(); $invalid.Token = "wrong"
     if (Test-PickerRequest @invalid) { throw "Invalid token was accepted." }
     $invalid = $valid.Clone(); $invalid.HostHeader = "localhost:43129"
@@ -217,9 +249,13 @@ if (-not $IsWindows -and $PSVersionTable.PSVersion.Major -ge 6) {
 }
 
 Add-Type -AssemblyName System.Windows.Forms
-$saveFolder = Get-SaveFolder
+$saveFolder = if ($SaveFolderOverride) { [IO.Path]::GetFullPath($SaveFolderOverride) } else { Get-SaveFolder }
 $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
 $nodePath = if ($nodeCommand) { $nodeCommand.Source } else { $null }
+if ($nodePath) {
+    $version = & $nodePath --version
+    if ($version -notmatch '^v(\d+)\.' -or [int]$Matches[1] -lt 18) { $nodePath = $null }
+}
 $openedFiles = @{}
 $token = New-SessionToken
 $port = 0
@@ -258,9 +294,13 @@ $assetPaths = @{
 $url = "$expectedOrigin/"
 $idleSeconds = 0
 Write-Output "Apocalypter Save Editor picker bridge is listening on 127.0.0.1:$port."
+Write-Output "Bridge process ID: $PID"
 Write-Output "Keep this window open while using the native picker; close it when finished."
 Write-Output "Picker folder for the current Windows user: $saveFolder"
-if (-not $NoLaunch) { Start-Process $url }
+if (-not $NoLaunch) {
+    $windowScript = Join-Path $PSScriptRoot "browser-window.ps1"
+    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$windowScript`" -Url `"$url`"" -NoNewWindow | Out-Null
+}
 
 try {
     $pending = $listener.BeginGetContext($null, $null)
@@ -282,7 +322,7 @@ try {
             continue
         }
 
-        if ($request.HttpMethod -ceq "OPTIONS" -and $path -cin @("/api/pick", "/api/save", "/api/status")) {
+        if ($request.HttpMethod -ceq "OPTIONS" -and $path -cin @("/api/pick", "/api/latest", "/api/save", "/api/status")) {
             $allowed = Test-PickerRequest -Method $request.HttpMethod -Path $path -HostHeader $hostHeader `
                 -Origin $origin -ExpectedHost $expectedHost -ExpectedOrigin $expectedOrigin `
                 -RequestedMethod $request.Headers["Access-Control-Request-Method"] `
@@ -310,10 +350,28 @@ try {
                 continue
             }
             Write-Json $context 200 @{
-                protocolVersion = 2
+                protocolVersion = 3
                 saveFolder = $saveFolder
                 folderExists = [bool](Test-Path -LiteralPath $saveFolder -PathType Container)
             } $expectedOrigin
+            continue
+        }
+
+        if ($request.HttpMethod -ceq "POST" -and $path -ceq "/api/latest") {
+            $allowed = Test-PickerRequest -Method $request.HttpMethod -Path $path -HostHeader $hostHeader `
+                -Origin $origin -Token $request.Headers["X-Editor-Token"] -ExpectedHost $expectedHost `
+                -ExpectedOrigin $expectedOrigin -ExpectedToken $token -ContentLength $request.ContentLength64
+            if (-not $allowed) {
+                Write-Json $context 403 @{ error = "Latest-slot request origin, token, or body was rejected." } $expectedOrigin
+                continue
+            }
+            try {
+                $latest = Get-LatestGameSlot -Folder $saveFolder
+                $payload = Register-OpenedSave -Path $latest -OpenedFiles $openedFiles -NodePath $nodePath
+                Write-Json $context 200 $payload $expectedOrigin
+            } catch {
+                Write-Json $context 409 @{ error = "Could not open the newest game slot: $($_.Exception.Message) No older slot was selected. Choose a file manually." } $expectedOrigin
+            }
             continue
         }
 
@@ -338,25 +396,7 @@ try {
                     Write-Json $context 200 @{ canceled = $true } $expectedOrigin
                     continue
                 }
-                $payload = Get-PickerSelection -SelectedPath $dialog.FileName -MaxBytes $maxBytes
-                if ($payload.status -ne 200) {
-                    $status = $payload.status
-                    $payload.Remove("status")
-                    Write-Json $context $status $payload $expectedOrigin
-                    continue
-                }
-                $payload.Remove("status")
-                $handle = New-SessionToken
-                if ($openedFiles.Count -ge 32) { $openedFiles.Remove(@($openedFiles.Keys)[0]) }
-                $openedFiles[$handle] = @{
-                    Path = [IO.Path]::GetFullPath($dialog.FileName)
-                    Hash = Get-SaveHash ([Convert]::FromBase64String($payload.contentBase64))
-                }
-                $payload.source = @{
-                    handle = $handle
-                    path = $openedFiles[$handle].Path
-                    canSave = [bool]$nodePath
-                }
+                $payload = Register-OpenedSave -Path $dialog.FileName -OpenedFiles $openedFiles -NodePath $nodePath
                 Write-Json $context 200 $payload $expectedOrigin
             } catch {
                 Write-Json $context 500 @{ error = "Could not read the selected save: $($_.Exception.Message)" } $expectedOrigin
@@ -381,7 +421,7 @@ try {
                 $payload = $body | ConvertFrom-Json
                 $source = Resolve-OpenedSaveRequest -Payload $payload -OpenedFiles $openedFiles
                 $result = Save-OpenedDocument -Source $source -Changes $payload.changes `
-                    -Confirmed $payload.confirmed -NodePath $nodePath
+                    -Confirmed $payload.confirmed -NodePath $nodePath -Autosave ([bool]$payload.autosave)
                 Write-Json $context 200 $result $expectedOrigin
             } catch {
                 Write-Json $context 409 @{ error = $_.Exception.Message } $expectedOrigin

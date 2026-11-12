@@ -79,13 +79,70 @@ function New-OriginalBackup {
     return $backupPath
 }
 
+function Test-VerifiedBackup {
+    param([string]$Path, [long]$Length, [string]$Hash)
+    if (-not $Path) { return $false }
+    try {
+        $file = Get-Item -LiteralPath $Path -ErrorAction Stop
+        if ($file.Length -ne $Length -or $file.PSIsContainer) { return $false }
+        return (Get-SaveHash (Read-BoundedSave $Path)) -ceq $Hash
+    } catch [IO.IOException] { return $false }
+    catch [UnauthorizedAccessException] { return $false }
+    catch [System.Management.Automation.ItemNotFoundException] { return $false }
+}
+
+function Get-LoadBackup {
+    param([string]$Path, [byte[]]$Bytes)
+    $hash = Get-SaveHash $Bytes
+    $prefix = [IO.Path]::GetFileName($Path) + "."
+    foreach ($candidate in Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($Path)) -File) {
+        if ($candidate.Name.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -and
+            $candidate.Name.EndsWith(".original.bak", [StringComparison]::OrdinalIgnoreCase) -and
+            (Test-VerifiedBackup $candidate.FullName $Bytes.Length $hash)) {
+            return $candidate.FullName
+        }
+    }
+    $backup = New-OriginalBackup -Path $Path -Bytes $Bytes
+    if (-not (Test-VerifiedBackup $backup $Bytes.Length $hash)) { throw "The load-time backup could not be verified. Editing is unavailable." }
+    return $backup
+}
+
+function Open-BackedUpSave {
+    param([string]$Path)
+    $file = Get-Item -LiteralPath $Path
+    if ($file.PSIsContainer -or $file.Extension -ine ".es3") { throw "Choose an .es3 save file." }
+    $bytes = Read-BoundedSave $file.FullName
+    $hash = Get-SaveHash $bytes
+    $backup = Get-LoadBackup -Path $file.FullName -Bytes $bytes
+    if ((Get-SaveHash (Read-BoundedSave $file.FullName)) -cne $hash) { throw "The save changed during opening. Reopen it; no edits were enabled." }
+    return @{
+        Path = $file.FullName
+        Hash = $hash
+        LoadHash = $hash
+        LoadLength = $bytes.Length
+        LoadBackup = $backup
+        ModifiedUtc = $file.LastWriteTimeUtc.ToString("o")
+        Bytes = $bytes
+    }
+}
+
+function Get-LatestGameSlot {
+    param([string]$Folder)
+    if (-not (Test-Path -LiteralPath $Folder -PathType Container)) { throw "The Apocalypter save folder does not exist: $Folder" }
+    $slots = @(Get-ChildItem -LiteralPath $Folder -File |
+        Where-Object { $_.Name -match '^SaveGame[0-9]+\.es3$' } |
+        Sort-Object @{ Expression = { $_.LastWriteTimeUtc }; Descending = $true }, Name)
+    if (-not $slots.Count) { throw "No SaveGameN.es3 slots were found in $Folder. Choose a file manually." }
+    return $slots[0].FullName
+}
+
 function Install-EditedSave {
     param([string]$TemporaryPath, [string]$Destination)
     [IO.File]::Replace($TemporaryPath, $Destination, [NullString]::Value)
 }
 
 function Save-OpenedDocument {
-    param($Source, $Changes, [bool]$Confirmed, [string]$NodePath)
+    param($Source, $Changes, [bool]$Confirmed, [string]$NodePath, [bool]$Autosave = $false)
     if (-not $Confirmed) { return @{ canceled = $true } }
     if (-not $Source -or -not $Source.Path -or -not $Source.Hash) { throw "This file is not bound to an opened native save. Reopen it with Choose File." }
     $original = Read-BoundedSave -Path $Source.Path
@@ -93,7 +150,13 @@ function Save-OpenedDocument {
         throw "The original changed outside the editor. Nothing was written. Reopen it before saving."
     }
     $edited = Get-ValidatedSaveEdit -Original $original -Changes $Changes -NodePath $NodePath
-    $backupPath = New-OriginalBackup -Path $Source.Path -Bytes $original
+    $loadBackupValid = $Source.LoadHash -and (Test-VerifiedBackup $Source.LoadBackup $Source.LoadLength $Source.LoadHash)
+    if ($Autosave -and -not $loadBackupValid) { throw "Autosave stopped: the verified load-time backup is missing or changed. Reopen the file to back it up again." }
+    $backupPath = if ($loadBackupValid -and ($Autosave -or $Source.Hash -ceq $Source.LoadHash)) {
+        $Source.LoadBackup
+    } else {
+        New-OriginalBackup -Path $Source.Path -Bytes $original
+    }
     $temporaryPath = Join-Path ([IO.Path]::GetDirectoryName($Source.Path)) (".apocalypter-" + [Guid]::NewGuid().ToString("N") + ".tmp")
     $temporaryCreated = $false
     try {

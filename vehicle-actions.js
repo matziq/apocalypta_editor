@@ -24,7 +24,35 @@
     return { staged, skippedInvalid };
   }
 
-  const api = { stage };
+  function all(vehicles, fields, readValue, writeValue, validate) {
+    const result = { staged: 0, skippedInvalid: 0, missingRepair: 0, missingFuel: 0 };
+    for (const vehicle of vehicles) {
+      for (const [action, suffix, missing] of [["repair", ":Condition", "missingRepair"], ["topoff", ":fuel", "missingFuel"]]) {
+        if (!vehicle.fieldIds.some(id => id.endsWith(suffix))) result[missing]++;
+        const next = stage(vehicle, fields, action, readValue, writeValue, validate);
+        result.staged += next.staged;
+        result.skippedInvalid += next.skippedInvalid;
+      }
+    }
+    return result;
+  }
+
+  function maximize(fields, readValue, writeValue, validate) {
+    const result = { staged: 0, skipped: [] };
+    for (const field of fields.filter(field => field.section === "player")) {
+      const target = /^global\.(Hunger|Thirst|Fatigue|Radiation)$/.test(field.id) ? 0 : 100;
+      if (readValue(field).invalid) { result.skipped.push(field.label); continue; }
+      try { validate(field, target); }
+      catch { result.skipped.push(field.label); continue; }
+      if (Number(readValue(field).value) !== target) {
+        writeValue(field, target);
+        result.staged++;
+      }
+    }
+    return result;
+  }
+
+  const api = { stage, all, maximize };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ApocalypterVehicleActions = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

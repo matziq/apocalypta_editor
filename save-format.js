@@ -45,6 +45,44 @@
     "6858519991654959144": { name: "Gasoline_Can", capacity: 20 },
     "4230013134874058846": { name: "Water_Can_Plastic", capacity: 13 }
   };
+  const switchHelp = {
+    peacefulMode: "True enables the game's peaceful-mode setting. The exact affected enemy behaviors have not been independently verified.",
+    disableThirstHunger: "True disables the game's thirst/hunger system; false enables it.",
+    disableFatigue: "True disables the game's fatigue system; false enables it.",
+    mapCheat: "True enables the saved map-cheat toggle. The exact map overlays affected have not been verified.",
+    disableInsanity: "True disables the insanity system. Negative saved Sanity behavior while disabled is not verified.",
+    toggleHeadbob: "True enables head-bob camera movement.",
+    toggleFPS: "True displays the FPS counter.",
+    toggleFootstepSounds: "True enables footstep sounds.",
+    toggleADS: "Selects toggle-style aiming down sights rather than hold-style aiming.",
+    automatic_gearbox: "True enables automatic gearbox control.",
+    autoclutch: "True enables automatic clutch control.",
+    normalizeinput: "Enables the game's normalized driving-input option. Its exact mathematical scaling has not been verified.",
+    bloom: "True enables the bloom graphics effect.",
+    sharpen: "True enables the sharpening graphics effect."
+  };
+
+  function fieldHelp(field) {
+    let effect = switchHelp[field.id];
+    if (!effect && field.id === "Player.Health") effect = "Player Health scalar. Higher values mean more health; 100 is the editor's healthy endpoint. The separate global.PlayerHealth copy is not changed.";
+    if (!effect && field.id === "Ammo.armor") effect = "Saved armor amount. Higher means more armor; 100 is the editor's supported maximum. This does not grant the separate body-armor flag.";
+    if (!effect && field.id.startsWith("Ammo.ammo_")) effect = field.id.endsWith("_capacity")
+      ? "Saved player ammunition supply capacity for this type. Increasing it changes only this counter, not the current amount."
+      : "Saved player ammunition supply count for this type. Higher means more supply, not per-weapon loaded rounds.";
+    if (!effect && Object.hasOwn(volumes, field.id)) effect = "Audio volume level: 0 is silent and 1 is full saved volume.";
+    if (!effect && field.id === "FOV") effect = "Camera field of view in degrees. Higher values widen the view; lower values narrow it.";
+    if (!effect && field.id.endsWith(":Condition")) effect = "Saved component condition in percent. Higher means healthier; 100 is the verified repair endpoint.";
+    if (!effect && field.id.endsWith(":fuel")) effect = "This vehicle's fuel amount in liters per the game's player-facing units. Higher means more fuel; the maximum is its saved tank capacity.";
+    if (!effect && field.id.endsWith(":Quantity")) effect = "Number of units in this existing stack. Higher means more units; minimum 1 prevents deleting the object. No ownership changes.";
+    if (!effect && field.id.endsWith(":Liquid")) effect = "Liquid amount in saved units (the save specifies no unit). Higher means more liquid. Its verified capacity is the maximum; it does not change the liquid's type.";
+    if (!effect && field.id.endsWith(":ammo")) effect = "Round count stored on this exact item. Higher means more rounds; this does not change player supplies or weapon-type loaded-round counters.";
+    if (!effect && field.id.startsWith("weaponsAmmoInGun.")) effect = "Loaded-round counter for this weapon type, not one specific weapon instance. Higher means more rounds in that shared counter.";
+    if (!effect) effect = field.description || "This exact saved scalar only; additional gameplay effects have not been verified.";
+    const range = field.type === "bool" ? "Boolean: true or false." : field.type
+      ? `${field.type === "int" ? "Whole numbers" : "Numbers"} from ${field.min} to ${field.max}.`
+      : "";
+    return [effect, range, field.description !== effect ? field.description : "", field.reason ? `Read-only: ${field.reason}` : ""].filter(Boolean).join(" ");
+  }
   const weaponAmmoLabels = {
     ammoakms: "AKMS (saved item ID: akms)",
     ammoakmdrum: "AKM drum",
@@ -180,9 +218,12 @@
       }
       const field = { id, label, group, type, min, max, section, description, value: scalar.value, start: scalar.start, end: scalar.end };
       if (type !== "bool" && (!Number.isFinite(scalar.value) || (type === "int" && !Number.isInteger(scalar.value)) || scalar.value < min || scalar.value > max)) {
-        readOnlyFields.push({ ...field, reason: `Outside this editor's supported ${type === "int" ? "whole-number " : ""}range (${min} to ${max}); preserved unchanged. Other supported values can still be edited.` });
+        const readOnly = { ...field, reason: `Outside this editor's supported ${type === "int" ? "whole-number " : ""}range (${min} to ${max}); preserved unchanged. Other supported values can still be edited.` };
+        readOnly.help = fieldHelp(readOnly);
+        readOnlyFields.push(readOnly);
         return null;
       }
+      field.help = fieldHelp(field);
       fields.push(field);
       return field;
     }
@@ -212,7 +253,9 @@
         const node = at(data, name);
         const value = node?.implicit || at(node, "value");
         if (value && ["number", "boolean"].includes(value.kind)) {
-          readOnlyFields.push({ id: `global.${name}`, label: `global.${name}`, group: "Other saved state (read-only)", section: "player", value: value.value, reason });
+          const field = { id: `global.${name}`, label: `global.${name}`, group: "Other saved state (read-only)", section: "player", value: value.value, reason };
+          field.help = fieldHelp(field);
+          readOnlyFields.push(field);
         }
       }
     }
@@ -447,7 +490,7 @@
               : ["Quantity", "Condition", "ammo"].includes(name)
                 ? "This saved value does not meet the supported type or range; it is preserved unchanged."
                 : "This field's gameplay meaning or safe range has not been verified; it is preserved unchanged.";
-          itemRecord.readOnlyFields.push({ name, value: value.value, reason });
+          itemRecord.readOnlyFields.push({ name, value: value.value, reason, help: `Saved ${name}: ${value.value}. Read-only: ${reason} No gameplay effect, unit, or safe range beyond the stated evidence is assumed.` });
         }
       }
       items.push(itemRecord);

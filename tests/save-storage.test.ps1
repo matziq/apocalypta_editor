@@ -56,6 +56,7 @@ $source = New-Fixture "backup-failure"
 $realBackup = ${function:New-OriginalBackup}
 try {
     function New-OriginalBackup { throw "Simulated backup failure" }
+    Assert-Fails { Open-BackedUpSave $source.Path } "backup failure"
     Assert-Fails { Save-OpenedDocument -Source $source -Changes @{ peacefulMode = $true } -Confirmed $true -NodePath $nodePath } "backup failure"
     Assert-BytesEqual ([IO.File]::ReadAllBytes($source.Path)) $original
 } finally { ${function:New-OriginalBackup} = $realBackup }
@@ -70,5 +71,38 @@ try {
     if ((Backup-Count) -ne $count + 1) { throw "Replacement failure did not retain the backup." }
     if (@(Get-ChildItem -LiteralPath $Root -Force -Filter ".apocalypter-*.tmp").Count) { throw "Owned temporary replacement was not cleaned up." }
 } finally { ${function:Install-EditedSave} = $realReplace }
+
+foreach ($name in @("SaveGame1", "SaveGame2", "SaveSettings", "SaveGame2.edited")) { New-Fixture $name | Out-Null }
+New-Fixture ("SaveGame" + [char]0x0663) | Out-Null
+[IO.File]::SetLastWriteTimeUtc((Join-Path $Root "SaveGame1.es3"), [DateTime]::UtcNow.AddMinutes(-3))
+[IO.File]::SetLastWriteTimeUtc((Join-Path $Root "SaveGame2.es3"), [DateTime]::UtcNow.AddMinutes(-2))
+if ([IO.Path]::GetFileName((Get-LatestGameSlot $Root)) -cne "SaveGame2.es3") { throw "Latest slot included a newer setting or edited export." }
+$newestPath = Get-LatestGameSlot $Root
+$locked = [IO.File]::Open($newestPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+try {
+    Assert-Fails { Open-BackedUpSave (Get-LatestGameSlot $Root) } "used by another process"
+} finally { $locked.Dispose() }
+$source = Open-BackedUpSave (Get-LatestGameSlot $Root)
+$source.Remove("Bytes")
+$loadBackup = $source.LoadBackup
+$count = Backup-Count
+Assert-BytesEqual ([IO.File]::ReadAllBytes($loadBackup)) $original
+$same = Open-BackedUpSave $source.Path
+if ($same.LoadBackup -cne $loadBackup -or (Backup-Count) -ne $count) { throw "Repeated open did not deduplicate exact-byte backups." }
+$first = Save-OpenedDocument $source @{ peacefulMode = $true } $true $nodePath -Autosave $true
+$second = Save-OpenedDocument $source @{ peacefulMode = $false } $true $nodePath -Autosave $true
+if ((Backup-Count) -ne $count) { throw "Autosave created per-change backups." }
+Assert-BytesEqual ([IO.File]::ReadAllBytes($loadBackup)) $original
+$manual = Save-OpenedDocument $source @{ peacefulMode = $true } $true $nodePath
+if ($manual.backupPath -cne $loadBackup) { throw "Manual save did not reuse an identical load-time backup." }
+$manual = Save-OpenedDocument $source @{ peacefulMode = $false } $true $nodePath
+if ($manual.backupPath -ceq $loadBackup) { throw "Manual save did not preserve the changed preceding bytes." }
+[IO.File]::WriteAllBytes($loadBackup, $external)
+Assert-Fails { Save-OpenedDocument $source @{ peacefulMode = $true } $true $nodePath -Autosave $true } "backup is missing or changed"
+Assert-BytesEqual ([IO.File]::ReadAllBytes($source.Path)) $original
+$fresh = Open-BackedUpSave $source.Path
+if ($fresh.LoadBackup -ceq $loadBackup) { throw "Open reused a corrupted backup." }
+[IO.File]::WriteAllBytes($source.Path, $external)
+Assert-Fails { Save-OpenedDocument $fresh @{ peacefulMode = $true } $true $nodePath -Autosave $true } "changed outside"
 
 Write-Output "Storage tests passed: cancel/no writes, exact backup bytes, repeat backup isolation, validation, stale-file refusal, backup failure, atomic replacement failure and baseline refresh."

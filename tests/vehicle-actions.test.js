@@ -64,3 +64,14 @@ test("invalid targeted edits are skipped instead of overwritten", () => {
   state.drafts.get("car-1:Condition").invalid = true;
   assert.deepEqual(apply(state, "repair"), { staged: 0, skippedInvalid: 1, updates: [] });
 });
+test("all-vehicle batch skips missing mappings and invalid targets without touching unrelated drafts", () => {
+  const state = fixture();
+  state.drafts.get("car-1:Condition").invalid = true;
+  state.drafts.get("Player.Health").value = "not valid";
+  const updates = [];
+  const result = Actions.all([state.vehicle, { fieldIds: ["car-2:Condition"] }, { fieldIds: [] }], state.fields,
+    field => state.drafts.get(field.id), (field, value) => updates.push([field.id, value]), (field, value) => assert.ok(value <= field.max));
+  assert.deepEqual(updates, [["car-1:fuel", 21], ["car-2:Condition", 100]]);
+  assert.deepEqual(result, { staged: 2, skippedInvalid: 1, missingRepair: 1, missingFuel: 2 });
+  assert.equal(state.drafts.get("Player.Health").value, "not valid");
+});

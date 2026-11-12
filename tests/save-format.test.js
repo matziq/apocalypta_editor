@@ -11,6 +11,21 @@ test("reads actual PlayMaker inline scalar syntax", () => {
   assert.equal(doc.kind, "Game save");
   assert.deepEqual(doc.fields.map(f => [f.id, f.value]), [["Player.Health", 100], ["Ammo.armor", 0], ["Ammo.ammo_9mm", 12]]);
 });
+test("every supported setting and parser field carries meaningful floating help, including read-only reasons", () => {
+  const bools = ["peacefulMode", "disableThirstHunger", "disableFatigue", "mapCheat", "disableInsanity", "toggleHeadbob", "toggleFPS", "toggleFootstepSounds", "toggleADS", "automatic_gearbox", "autoclutch", "normalizeinput", "bloom", "sharpen"];
+  const volumes = ["ambient_volume", "enginesoundvolume", "boss_music", "ambient_music", "audio_volume", "main_menu_music"];
+  const root = Object.fromEntries([...bools.map(id => [id, { __type: "bool", value: false }]), ...volumes.map(id => [id, { __type: "float", value: 0.5 }]), ["FOV", { __type: "float", value: 90 }]]);
+  const doc = inspect(JSON.stringify(root));
+  assert.equal(doc.fields.length, 21);
+  for (const field of doc.fields) {
+    assert.ok(field.help?.length > 40, field.id);
+    if (field.type === "bool") assert.match(field.help, /True|Enables|Selects/, field.id);
+    else assert.match(field.help, /from \d+ to/, field.id);
+  }
+  for (const field of inspect(game).fields) assert.ok(field.help?.length > 40, field.id);
+  const readOnly = inspect(game.replace('"float"1e2', '"float"101')).readOnlyFields[0];
+  assert.match(readOnly.help, /Read-only:.*preserved unchanged/);
+});
 test("no-op roundtrip preserves BOM, CRLF, precision and spelling", () => {
   assert.equal(serialize(game, {}), game);
   assert.equal(serialize(game, { "Player.Health": 100 }), game);

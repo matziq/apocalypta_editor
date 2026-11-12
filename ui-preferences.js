@@ -5,19 +5,23 @@
 
   function load(storage, prefersDark) {
     const raw = storage.getItem(storageKey);
-    if (!raw) return { theme: "system", season: "spring", prefersDark };
+    if (!raw) return { theme: "system", season: "spring", prefersDark, autosave: false, editableOnly: false };
     const saved = JSON.parse(raw);
     return {
       theme: ["light", "dark"].includes(saved.theme) ? saved.theme : "system",
       season: seasons.includes(saved.season) ? saved.season : "spring",
-      prefersDark
+      prefersDark,
+      autosave: saved.autosave === true,
+      editableOnly: saved.editableOnly === true
     };
   }
 
   function save(storage, preferences) {
     storage.setItem(storageKey, JSON.stringify({
       theme: preferences.theme,
-      season: preferences.season
+      season: preferences.season,
+      autosave: preferences.autosave === true,
+      editableOnly: preferences.editableOnly === true
     }));
   }
 
