@@ -78,7 +78,10 @@ FORM: Familiar desktop utility, with an in-place before/after review instead of 
         <label class="filter-label" for="item-filter">Find an item</label>
         <input id="item-filter" type="search" placeholder="Filter by item name or location">
         <label class="check-control" for="editable-only"><input id="editable-only" type="checkbox"> Show editable items only</label>
+        <button id="maximize-items" type="button" disabled>Maximize all</button>
+        <p id="item-action-status" role="status" aria-live="polite"></p>
         <p id="item-filter-status" role="status" aria-live="polite"></p>
+        <div id="item-editor-home" hidden>
         <section id="item-editor" aria-labelledby="item-editor-title" hidden>
           <h3 id="item-editor-title" tabindex="-1">Selected item</h3>
           <p id="item-editor-note"></p>
@@ -86,6 +89,7 @@ FORM: Familiar desktop utility, with an in-place before/after review instead of 
           <p id="item-edit-status"></p>
           <dl id="item-read-only"></dl>
         </section>
+        </div>
         <div class="table-wrap">
           <table><thead><tr><th>Saved item</th><th>Location evidence</th><th>Instance</th><th>Original saved values / actions</th></tr></thead><tbody id="item-rows"></tbody></table>
         </div>

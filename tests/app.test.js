@@ -36,6 +36,7 @@ function app({ stored = null, pickerResult, pickerError, native = true, confirm 
     },
     focus() { this.focused = true; },
     scrollIntoView() {},
+    getBoundingClientRect() { return { top: 100 }; },
     insertAdjacentElement(position, node) { this.parentNode.append(node); },
     querySelectorAll: () => [],
     setAttribute(name, value) { this.attributes.set(name, value); },
@@ -304,6 +305,8 @@ test("delayed autosave refreshes item and vehicle baselines without replacing co
   assert.equal(input.value, "70");
   assert.equal(ui.elements.get("item-filter").value, "engine");
   assert.equal(vm.runInContext("selectedItemId === doc.items[0].id", ui.context), true);
+  assert.equal(ui.elements.get("item-editor").parentNode, vm.runInContext("itemRows.get(doc.items[0].id).editorCell", ui.context));
+  assert.equal(vm.runInContext("itemRows.get(doc.items[0].id).expansion.hidden", ui.context), false);
   assert.match(vm.runInContext("itemRows.get(doc.items[0].id).summary.textContent", ui.context), /90%/);
   assert.match(vm.runInContext("vehicleSummaryRows.get(doc.vehicles[0].id).parts.textContent", ui.context), /90%/);
   await ui.flushTimers();
@@ -406,6 +409,18 @@ test("all Save buttons share availability, exact destination confirmation, and c
   }
   assert.equal(confirmations, 3);
   assert.equal(ui.fetches.length, 0);
+});
+test("editing numeric values dismisses help without removing their accessible descriptions", () => {
+  const ui = app();
+  nativeFixture(ui);
+  const input = draft(ui, "Player.Health");
+  assert.match(input.getAttribute("aria-describedby"), /help-/);
+  for (const event of ["focus", "pointerenter", "pointerdown"]) {
+    ui.elements.get("floating-help").hidden = false;
+    input.events[event]();
+    assert.equal(ui.elements.get("floating-help").hidden, true, event);
+    assert.equal(input.value, "100");
+  }
 });
 
 test("canceling manual Save also cancels a queued autosave so cancel cannot cause a write", async () => {
@@ -541,6 +556,78 @@ test("filtering world items by saved identity preserves the selected item's edit
   ui.elements.get("item-filter").events.input();
   assert.match(ui.elements.get("item-filter-status").textContent, /No items match/);
   assert.equal(vm.runInContext("changes.get(doc.items[0].fieldIds[0])", ui.context), 100);
+});
+test("item editors expand beside their rows, toggle closed, and follow filters without losing drafts", () => {
+  const ui = app();
+  seedWorldItems(ui);
+  vm.runInContext("selectItem(doc.items[0].id);", ui.context);
+  const first = vm.runInContext("itemRows.get(doc.items[0].id)", ui.context);
+  assert.equal(ui.elements.get("item-editor").parentNode, first.editorCell);
+  assert.equal(first.expansion.hidden, false);
+  assert.equal(first.button.getAttribute("aria-expanded"), "true");
+  vm.runInContext('inputs.get(doc.items[0].fieldIds[0]).value = "91"; refresh();', ui.context);
+  ui.elements.get("item-filter").value = "9001";
+  ui.elements.get("item-filter").events.input();
+  assert.equal(first.expansion.hidden, true);
+  ui.elements.get("item-filter").value = "";
+  ui.elements.get("item-filter").events.input();
+  assert.equal(first.expansion.hidden, false);
+  vm.runInContext("selectItem(doc.items[1].id);", ui.context);
+  assert.equal(first.expansion.hidden, true);
+  assert.equal(ui.elements.get("item-editor").parentNode, vm.runInContext("itemRows.get(doc.items[1].id).editorCell", ui.context));
+  assert.equal(vm.runInContext("changes.get(doc.items[0].fieldIds[0])", ui.context), 91);
+  vm.runInContext("selectItem(doc.items[1].id);", ui.context);
+  assert.equal(ui.elements.get("item-editor").hidden, true);
+  assert.equal(ui.elements.get("item-editor").parentNode, ui.elements.get("item-editor-home"));
+  assert.equal(vm.runInContext("itemRows.get(doc.items[1].id).button.getAttribute('aria-expanded')", ui.context), "false");
+});
+
+test("Saved items Maximize all includes hidden and mounted targets in a single autosave", async () => {
+  let text;
+  let payload;
+  const ui = app({ timers: true, fetchResponse: async (url, init) => {
+    payload = JSON.parse(init.body);
+    return saveReply(Save.serialize(text, payload.changes));
+  } });
+  seedWorldItems(ui, true);
+  const root = JSON.parse(ui.context.worldText);
+  root["engine(Clone)2"].value.objs.Liquid = scalar(2);
+  root["engine(Clone)2"].value.objs.LiquidCapacity = scalar(5);
+  root["engine(Clone)2"].value.objs.Quantity = { __type: "int", value: 3 };
+  root["engine(Clone)2"].value.objs.ammo = { __type: "int", value: 4 };
+  root.weaponsAmmoInGun = pm({ ammoakms: { __type: "int", value: 10 } });
+  text = JSON.stringify(root);
+  nativeFixture(ui, text);
+  ui.elements.get("autosave").checked = true; ui.elements.get("autosave").events.change();
+  ui.elements.get("item-filter").value = "wheel";
+  ui.elements.get("item-filter").events.input();
+  ui.elements.get("maximize-items").events.click();
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 1);
+  assert.deepEqual(payload.changes, { "item:9000:0:Condition": 100, "item:9001:1:Condition": 100, "item:9001:1:Liquid": 5 });
+  assert.match(ui.elements.get("item-action-status").textContent, /staged 3.*3 counters skipped.*0 invalid/);
+  assert.equal(vm.runInContext("changes.size", ui.context), 0);
+  assert.equal(ui.elements.get("item-filter").value, "wheel");
+});
+test("manual Save and Reset reopen the selected inline editor without clearing the filter", async () => {
+  let text;
+  const ui = app({ fetchResponse: async (url, init) => saveReply(Save.serialize(text, JSON.parse(init.body).changes)) });
+  seedWorldItems(ui);
+  text = ui.context.worldText;
+  nativeFixture(ui, text);
+  vm.runInContext('selectItem(doc.items[1].id); inputs.get(doc.items[1].fieldIds[0]).value = "91"; refresh();', ui.context);
+  ui.elements.get("item-filter").value = "9001";
+  ui.elements.get("item-filter").events.input();
+  await ui.elements.get("save").events.click();
+  assert.equal(vm.runInContext("doc.items[1].condition", ui.context), 91);
+  assert.equal(ui.elements.get("item-editor").parentNode, vm.runInContext("itemRows.get(doc.items[1].id).editorCell", ui.context));
+  assert.equal(vm.runInContext("itemRows.get(doc.items[1].id).expansion.hidden", ui.context), false);
+  assert.equal(ui.elements.get("item-filter").value, "9001");
+  vm.runInContext('inputs.get(doc.items[1].fieldIds[0]).value = "80"; refresh();', ui.context);
+  ui.elements.get("reset").events.click();
+  assert.equal(vm.runInContext("inputs.get(doc.items[1].fieldIds[0]).value", ui.context), "91");
+  assert.equal(vm.runInContext("itemRows.get(doc.items[1].id).expansion.hidden", ui.context), false);
+  assert.equal(ui.elements.get("item-filter").value, "9001");
 });
 
 test("out-of-range values are explained without inputs and do not block unrelated edits", () => {

@@ -75,3 +75,18 @@ test("all-vehicle batch skips missing mappings and invalid targets without touch
   assert.deepEqual(result, { staged: 2, skippedInvalid: 1, missingRepair: 1, missingFuel: 2 });
   assert.equal(state.drafts.get("Player.Health").value, "not valid");
 });
+test("item maximization skips unknown maxima and invalid drafts, never lowers or duplicates targets", () => {
+  const fields = [
+    { id: "part:Condition", max: 100 }, { id: "can:Liquid", max: 5 }, { id: "part:Quantity", max: 2147483647 },
+    { id: "weaponsAmmoInGun.ammoakms", max: 2147483647 }, { id: "other:Condition", max: 100 }
+  ];
+  const items = [{ fieldIds: fields.slice(0, 3).map(field => field.id), readOnlyFields: [{}] }, { fieldIds: ["part:Condition", "other:Condition"], readOnlyFields: [] }];
+  const drafts = new Map([
+    ["part:Condition", { value: 95, invalid: true }], ["can:Liquid", { value: 6, invalid: false }],
+    ["part:Quantity", { value: 2, invalid: false }], ["other:Condition", { value: 25, invalid: false }]
+  ]);
+  const updates = [];
+  const result = Actions.maximizeItems(items, fields, field => drafts.get(field.id), (field, value) => updates.push([field.id, value]), () => {});
+  assert.deepEqual(updates, [["other:Condition", 100]]);
+  assert.deepEqual(result, { staged: 1, skippedUnverified: 2, skippedInvalid: 1, readOnly: 1 });
+});

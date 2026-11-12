@@ -82,8 +82,9 @@ function attachHelp(container, text, label, input) {
   if (input) {
     const previous = input.getAttribute("aria-describedby");
     input.setAttribute("aria-describedby", [previous, description.id].filter(Boolean).join(" "));
-    input.addEventListener("focus", () => showHelp(input, text));
-    input.addEventListener("blur", leave);
+    input.addEventListener("focus", hideHelp);
+    input.addEventListener("pointerenter", hideHelp);
+    input.addEventListener("pointerdown", hideHelp);
   }
   container.append(button, description);
 }
@@ -182,6 +183,7 @@ function refresh() {
   for (const id of saveButtons) $(id).disabled = saving || openingNative || !!errors.length || !changes.size || !nativeSource?.canSave;
   $("autosave").disabled = !nativeSource?.canSave || !nativeSource?.backupPath || openingNative;
   $("autosave").checked = preferences.autosave;
+  $("maximize-items").disabled = saving && !savingAutomatically || !doc.items.length;
   if (!nativeSource?.canSave) $("autosave-status").textContent = "Autosave unavailable: open through run.bat with Node.js 18+; browser files support export only.";
   else if (!preferences.autosave) $("autosave-status").textContent = "Autosave is off. Changes stay staged until a confirmed Save.";
   else if (autosaveFailed) $("autosave-status").textContent = `Autosave stopped after an error: ${autosaveFailureMessage}. Drafts are kept; resolve the problem, then turn autosave off and on to retry.`;
@@ -260,7 +262,6 @@ function render() {
       input.setAttribute("aria-describedby", hint.id);
     }
     if (field.description) {
-      input.title = field.description;
       input.setAttribute("aria-description", field.description);
     }
     input.addEventListener("input", refresh);
@@ -338,11 +339,16 @@ function renderItemEditor() {
   $("item-fields").replaceChildren();
   $("item-read-only").replaceChildren();
   $("item-editor").hidden = !item;
-  for (const [id, { row, button }] of itemRows) {
+  for (const [id, { row, button, expansion }] of itemRows) {
     row.dataset.selected = String(id === item?.id);
     button.setAttribute("aria-expanded", String(id === item?.id));
+    expansion.hidden = id !== item?.id || row.hidden;
   }
-  if (!item) return;
+  if (!item) {
+    $("item-editor-home").append($("item-editor"));
+    return;
+  }
+  itemRows.get(item.id).editorCell.append($("item-editor"));
   $("item-editor-title").textContent = item.name;
   const position = ["x", "y", "z"].every(axis => Number.isFinite(item.position?.[axis]))
     ? ` Local position (parent-relative): ${["x", "y", "z"].map(axis => `${axis} ${numericText(item.position[axis])}`).join(", ")}.`
@@ -367,11 +373,17 @@ function renderItemEditor() {
 
 function selectItem(itemId) {
   if (saving && !savingAutomatically) return;
-  selectedItemId = itemId;
+  const row = itemRows.get(itemId)?.row;
+  const top = row?.getBoundingClientRect().top;
+  selectedItemId = itemId === selectedItemId ? null : itemId;
   selectSection("items");
-  $("item-editor").scrollIntoView({ block: "nearest" });
-  const item = doc.items.find(candidate => candidate.id === itemId);
-  (inputs.get(item?.fieldIds[0]) || $("item-editor-title")).focus({ preventScroll: true });
+  if (row && top !== undefined) {
+    const delta = row.getBoundingClientRect().top - top;
+    if (delta) window.scrollBy(0, delta);
+  }
+  const item = doc.items.find(candidate => candidate.id === selectedItemId);
+  if (item) (inputs.get(item.fieldIds[0]) || $("item-editor-title")).focus({ preventScroll: true });
+  else itemRows.get(itemId)?.button.focus({ preventScroll: true });
 }
 
 function itemSummary(item) {
@@ -406,9 +418,9 @@ function updateSavedSummaries() {
 }
 function renderItems() {
   const rows = $("item-rows");
+  $("item-editor-home").append($("item-editor"));
   rows.replaceChildren();
   itemRows = new Map();
-  $("item-filter").value = "";
   $("editable-only").checked = preferences.editableOnly;
   const itemCount = doc.items.length;
   const unparented = doc.items.filter(item => item.parentRef === null).length;
@@ -472,9 +484,15 @@ function renderItems() {
     edit.setAttribute("aria-expanded", String(item.id === selectedItemId));
     edit.addEventListener("click", () => selectItem(item.id));
     savedValues.append(edit);
-    itemRows.set(item.id, { row, button: edit, summary });
+    const expansion = document.createElement("tr");
+    expansion.className = "item-expansion";
+    expansion.hidden = true;
+    const editorCell = document.createElement("td");
+    editorCell.colSpan = 4;
+    expansion.append(editorCell);
+    itemRows.set(item.id, { row, button: edit, summary, expansion, editorCell });
     row.append(name, location, instance, savedValues);
-    rows.append(row);
+    rows.append(row, expansion);
   }
   filterItems();
 }
@@ -482,8 +500,10 @@ function renderItems() {
 function filterItems() {
   const term = $("item-filter").value.trim().toLowerCase();
   let visible = 0;
-  for (const { row } of itemRows.values()) {
+  for (const [id, { row, expansion }] of itemRows) {
     row.hidden = !row.dataset.search.includes(term) || ($("editable-only").checked && row.dataset.editable !== "true");
+    expansion.hidden = row.hidden || id !== selectedItemId;
+    if (row.hidden && id === selectedItemId) hideHelp();
     if (!row.hidden) visible++;
   }
   $("item-filter-status").textContent = visible
@@ -655,6 +675,7 @@ async function openFile(file, source = null) {
     autosaveFailed = false;
     nativeSource = source;
     selectedItemId = null;
+    $("item-filter").value = "";
     render();
     return true;
   } catch (error) {
@@ -753,6 +774,14 @@ $("maximize-player").addEventListener("click", () => {
   $("player-action-status").textContent = `Maximize all staged ${result.staged} values: editable health, armor and supplies to 100; Hunger, Thirst, Fatigue and Radiation to 0. Read-only values were untouched.${result.skipped.length ? ` Could not set: ${result.skipped.join(", ")} (invalid draft or unsupported target).` : ""}`;
   requestAutosave();
 });
+$("maximize-items").addEventListener("click", () => {
+  if (!doc || (saving && !savingAutomatically)) return;
+  refresh();
+  const result = ApocalypterVehicleActions.maximizeItems(doc.items, doc.fields, readDraft, writeDraft, ApocalypterSave.validate);
+  refresh();
+  $("item-action-status").textContent = `Maximize all staged ${result.staged} verified condition/liquid values across all saved items, regardless of filters. ${result.skippedUnverified} counters skipped (no verified game maximum); ${result.skippedInvalid} invalid target drafts skipped. ${result.readOnly} read-only values were untouched. No values were lowered.`;
+  requestAutosave();
+});
 $("all-vehicles").addEventListener("click", () => {
   if (!doc || saving) return;
   refresh();
@@ -825,6 +854,7 @@ async function saveDocument(automatic = false) {
     $("reset").disabled = !doc;
     $("vehicle-select").disabled = false;
     $("maximize-player").disabled = !doc?.fields.some(field => field.section === "player");
+    $("maximize-items").disabled = !doc?.items.length;
     updateVehicleActions();
     const disabled = !changes.size || !source.canSave || [...inputs.values()].some(input => input.getAttribute("aria-invalid") === "true");
     for (const id of saveButtons) $(id).disabled = disabled;
@@ -857,6 +887,7 @@ for (const [id, text] of [
   ["autosave", "Consent to overwrite the exact native-opened file after each committed valid change, without a separate prompt. A verified load-time backup is required. Invalid drafts pause saving; errors stop automatic retries. Turning it off keeps pending drafts."],
   ["editable-only", "Shows only item instances with at least one currently editable field. Combines with text search; hidden items and their drafts are not deleted."],
   ["maximize-player", "Stages editable Player & supplies values to exactly 100, except Hunger, Thirst, Fatigue and Radiation to 0. This can lower ammo values above 100. Read-only fields and invalid target drafts are skipped."],
+  ["maximize-items", "Stages every saved item's editable Condition to 100 and Liquid to its verified capacity, including matched mounted parts and hidden filtered items. Never lowers values. Quantity, item ammo and weapon-type counters have no verified game maximum and are skipped, as are invalid drafts and read-only values."],
   ["all-vehicles", "Stages the same verified component repairs and tank top-offs as the selected-vehicle actions, across all vehicles. Unknown parts, storage associations and invalid target drafts are skipped."],
   ["repair-vehicle", "Stages this selected vehicle's reference-matched component Condition values to 100%. It does not repair unlinked or stored spare parts."],
   ["topoff-vehicle", "Stages this selected vehicle's Liquid amount to its verified saved tank capacity. Missing/invalid fuel mappings are skipped."]

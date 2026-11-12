@@ -52,7 +52,25 @@
     return result;
   }
 
-  const api = { stage, all, maximize };
+  function maximizeItems(items, fields, readValue, writeValue, validate) {
+    const ids = new Set(items.flatMap(item => item.fieldIds));
+    const result = { staged: 0, skippedUnverified: 0, skippedInvalid: 0, readOnly: items.reduce((sum, item) => sum + item.readOnlyFields.length, 0) };
+    for (const field of fields.filter(field => ids.has(field.id) || field.id.startsWith("weaponsAmmoInGun."))) {
+      if (!field.id.endsWith(":Condition") && !field.id.endsWith(":Liquid")) {
+        result.skippedUnverified++;
+        continue;
+      }
+      const current = readValue(field);
+      if (current.invalid) { result.skippedInvalid++; continue; }
+      if (Number(current.value) >= field.max) continue;
+      validate(field, field.max);
+      writeValue(field, field.max);
+      result.staged++;
+    }
+    return result;
+  }
+
+  const api = { stage, all, maximize, maximizeItems };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ApocalypterVehicleActions = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
