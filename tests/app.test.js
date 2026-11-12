@@ -274,3 +274,53 @@ test("filtering world items by saved identity preserves the selected item's edit
   assert.match(ui.elements.get("item-filter-status").textContent, /No items match/);
   assert.equal(vm.runInContext("changes.get(doc.items[0].fieldIds[0])", ui.context), 100);
 });
+
+test("out-of-range values are explained without inputs and do not block unrelated edits", () => {
+  const ui = app();
+  vm.runInContext(`
+    doc = ApocalypterSave.inspect('{"FOV":{"__type":"float","value":121},"peacefulMode":{"__type":"bool","value":false}}');
+    render();
+    inputs.get("peacefulMode").checked = true;
+    refresh();
+  `, ui.context);
+  assert.equal(vm.runInContext("inputs.has('FOV')", ui.context), false);
+  assert.equal(vm.runInContext("changes.get('peacefulMode')", ui.context), true);
+  assert.equal(ui.elements.get("export").disabled, false);
+  assert.equal(ui.elements.get("fields").hidden, false);
+  const rows = ui.elements.get("fields").children.flatMap(group => group.children);
+  const readOnlyRow = rows.find(row => row.children?.[0]?.textContent === "Field of view (read-only)");
+  assert.ok(readOnlyRow);
+  assert.equal(readOnlyRow.children[1].textContent, "121");
+  assert.match(readOnlyRow.children[0].children[0].textContent, /preserved unchanged/);
+  ui.elements.get("reset").events.click();
+  assert.equal(vm.runInContext("doc.readOnlyFields[0].value", ui.context), 121);
+  assert.equal(vm.runInContext("changes.size", ui.context), 0);
+  vm.runInContext('doc = ApocalypterSave.inspect(\'{"FOV":{"__type":"float","value":121}}\'); render();', ui.context);
+  assert.equal(ui.elements.get("fields").hidden, false);
+  assert.equal(vm.runInContext("inputs.size", ui.context), 0);
+});
+
+test("item inspector shows verified prefab capacity evidence without claiming mounting", () => {
+  const ui = app();
+  seedWorldItems(ui);
+  vm.runInContext(`
+    const root = JSON.parse(worldText);
+    const name = "MotorOil_Can_Small(Clone)1";
+    root.newGOArray_Items.value.array[0].name = name;
+    root.newGOArray_Items.value.array[0].es3Prefab = { prefabId: "5864412579365047585" };
+    root.newGOArray_Items.value.array[0].components[0].parent = { _ES3Ref: "storage-child" };
+    root[name] = root["engine(Clone)1"];
+    delete root["engine(Clone)1"];
+    root[name].value.objs.owner.es3Prefab = { prefabId: "5864412579365047585" };
+    root.newGOArray_Cars = { value: { array: [{ name: "car(Clone)1", _ES3Ref: "car-1", es3Prefab: { refs: { child: "storage-child" } } }] } };
+    root["car(Clone)1"] = { __type: "ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass", value: { objs: { owner: { _ES3Ref: "car-1" } } } };
+    doc = ApocalypterSave.inspect(JSON.stringify(root)); render(); selectItem(doc.items[0].id);
+  `, ui.context);
+  assert.match(ui.elements.get("item-editor-note").textContent, /prefab 5864412579365047585/);
+  assert.match(ui.elements.get("item-editor-note").textContent, /mounting\/storage unknown/);
+  assert.match(ui.elements.get("items-note").textContent, /1 vehicle-associated/);
+  assert.equal(vm.runInContext("doc.vehicles[0].parts.length", ui.context), 0);
+  ui.elements.get("item-filter").value = "car(Clone)1";
+  ui.elements.get("item-filter").events.input();
+  assert.match(ui.elements.get("item-filter-status").textContent, /1 of 3/);
+});

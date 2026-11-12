@@ -45,6 +45,19 @@ test("duplicate keys are refused instead of editing an ambiguous field", () => {
 test("wrong type in a recognized field fails closed", () => {
   assert.throws(() => inspect(game.replace('"float"1e2', '"string"100')), /Unsupported structure/);
 });
+test("out-of-editor-range saved values stay read-only without blocking unrelated edits", () => {
+  const text = game.replace('"float"1e2', '"float"1.01e2').replace('"float"0', '"float"-1');
+  const doc = inspect(text);
+  assert.deepEqual(doc.readOnlyFields.map(field => [field.id, field.value]), [["Player.Health", 101], ["Ammo.armor", -1]]);
+  assert.match(doc.readOnlyFields[0].reason, /preserved unchanged/);
+  assert.equal(serialize(text, {}), text);
+  assert.equal(serialize(text, { "Ammo.ammo_9mm": 30 }), text.replace('"int"12', '"int"30'));
+  assert.throws(() => serialize(text, { "Player.Health": 100 }), /not supported/);
+  const onlyReadOnly = '{"FOV":{"__type":"float","value":121}}';
+  assert.equal(inspect(onlyReadOnly).fields.length, 0);
+  assert.deepEqual(inspect(onlyReadOnly).sections.map(section => section.id), ["settings"]);
+  assert.equal(serialize(onlyReadOnly, {}), onlyReadOnly);
+});
 test("Map edits, boundary values and scientific notation are supported", () => {
   assert.equal(inspect(serialize(game, new Map([["Ammo.ammo_9mm", 2147483647]]))).fields.find(f => f.id === "Ammo.ammo_9mm").value, 2147483647);
   assert.equal(inspect(serialize(game, { "Player.Health": 0 })).fields[0].value, 0);
@@ -272,4 +285,121 @@ test("item liquids use only their own saved capacity and ambiguous world parts r
   const crossArray = inspect(domainSave({ worldItems: true, crossArrayRef: true }));
   assert.equal(crossArray.items.find(item => item.name === "3L I5 Diesel(Clone)38").fieldIds.length, 0);
   assert.equal(crossArray.vehicles.find(car => car.name === "ambiguous_car(Clone)9").fieldIds.length, 0);
+});
+
+test("verified survival globals use gameplay clamp bounds while uncertain state stays read-only", () => {
+  const text = JSON.stringify({ global: pm({
+    Hunger: { __type: "float", value: 10 },
+    Thirst: { __type: "float", value: 15 },
+    Fatigue: { __type: "float", value: 16.5 },
+    Radiation: { __type: "float", value: 0 },
+    Money: { __type: "int", value: 39 },
+    Sanity: { __type: "float", value: -27.3359985 },
+    PlayerHealth: { __type: "float", value: 100 }
+  }) });
+  const doc = inspect(text);
+  assert.equal(doc.kind, "Game save");
+  assert.deepEqual(doc.fields.map(field => field.id), ["global.Hunger", "global.Thirst", "global.Fatigue", "global.Radiation"]);
+  assert.deepEqual(doc.readOnlyFields.map(field => field.id), ["global.Money", "global.Sanity", "global.PlayerHealth"]);
+  const edits = Object.fromEntries(doc.fields.map(field => [field.id, field.id === "global.Radiation" ? 100 : 0]));
+  const reopened = inspect(serialize(text, edits));
+  assert.deepEqual(reopened.readOnlyFields.map(field => field.value), [39, -27.3359985, 100]);
+  for (const field of doc.fields) {
+    for (const value of [-0.01, 100.01]) assert.throws(() => serialize(text, { [field.id]: value }), /between 0 and 100/);
+  }
+  assert.throws(() => serialize(text, { "global.Sanity": 0 }), /not supported/);
+});
+
+test("additional verified boolean settings edit only the requested scope", () => {
+  for (const name of ["automatic_gearbox", "autoclutch", "normalizeinput", "bloom", "sharpen"]) {
+    const text = JSON.stringify({
+      [name]: { __type: "bool", value: false },
+      global: pm({ [name]: { __type: "bool", value: false } })
+    });
+    const edited = serialize(text, { [name]: true });
+    assert.equal(edited, text.replace('"value":false', '"value":true'));
+    assert.equal(inspect(edited).fields.find(field => field.id === name).value, true);
+    assert.throws(() => serialize(text, { [`global.${name}`]: true }), /not supported/);
+  }
+});
+
+function prefabLiquidSave(name = "MotorOil_Can_Small", prefabId = "5864412579365047585", extra = {}) {
+  const savedName = `${name}(Clone)1`;
+  const object = gameObject(savedName, 801, 8001);
+  object.es3Prefab = { prefabId, refs: {} };
+  const record = itemRecord(savedName, 801, { Liquid: { __type: "float", value: 4.5 }, ...extra });
+  record.value.objs.owner.es3Prefab = { prefabId, refs: {} };
+  return {
+    Player: pm({ Health: { __type: "float", value: 100 } }),
+    newGOArray_Items: pm(null, [object]),
+    [savedName]: record
+  };
+}
+
+test("exact verified prefab identities provide item bounds without adding a saved capacity", () => {
+  for (const [name, prefabId, capacity] of [
+    ["MotorOil_Can_Small", "5864412579365047585", 5],
+    ["Gasoline_Can", "6858519991654959144", 20],
+    ["Water_Can_Plastic", "4230013134874058846", 13]
+  ]) {
+    const text = JSON.stringify(prefabLiquidSave(name, prefabId));
+    const doc = inspect(text);
+    const item = doc.items[0];
+    assert.equal(item.liquid.capacity, capacity);
+    assert.match(item.liquid.capacitySource, new RegExp(prefabId));
+    const id = item.fieldIds[0], field = doc.fields.find(field => field.id === id);
+    const edited = serialize(text, { [id]: capacity });
+    assert.equal(edited, text.slice(0, field.start) + capacity + text.slice(field.end));
+    assert.equal(edited.includes('"LiquidCapacity"'), false);
+    assert.throws(() => serialize(text, { [id]: capacity + 0.01 }), /between/);
+    assert.equal(serialize(text, {}), text);
+  }
+});
+
+test("prefab liquid fallback refuses missing, conflicting, misnamed and ambiguous identities", () => {
+  const scenarios = [
+    root => { delete root.newGOArray_Items.value.array[0].es3Prefab; },
+    root => { root["MotorOil_Can_Small(Clone)1"].value.objs.owner.es3Prefab.prefabId = "unknown"; },
+    root => { root.newGOArray_Items.value.array[0].es3Prefab.prefabId = "unknown"; },
+    root => { root.newGOArray_Items.value.array.push(gameObject("copy(Clone)2", 801, 8002)); },
+    root => { root["MotorOil_Can_Small(Clone)1"].value.objs.Liquid.value = 5.1; }
+  ];
+  for (const change of scenarios) {
+    const root = prefabLiquidSave();
+    change(root);
+    assert.equal(inspect(JSON.stringify(root)).items[0].liquid, null);
+  }
+  assert.equal(inspect(JSON.stringify(prefabLiquidSave("UnknownCan"))).items[0].liquid, null);
+  for (const value of [0, -1]) {
+    const root = prefabLiquidSave(undefined, undefined, { LiquidCapacity: { __type: "float", value } });
+    assert.equal(inspect(JSON.stringify(root)).items[0].liquid, null);
+  }
+  const savedCapacity = inspect(JSON.stringify(prefabLiquidSave(undefined, undefined, { LiquidCapacity: { __type: "float", value: 7 } }))).items[0];
+  assert.deepEqual(savedCapacity.liquid, { value: 4.5, capacity: 7 });
+});
+
+test("unique vehicle prefab membership supplies location evidence but never repair targets", () => {
+  const root = prefabLiquidSave();
+  const itemName = "MotorOil_Can_Small(Clone)1";
+  root.newGOArray_Items.value.array[0].components[0].parent = { _ES3Ref: "vehicle-child" };
+  root[itemName].value.objs.Condition = { __type: "float", value: 50 };
+  const car = gameObject("car(Clone)2", 900, 9000);
+  car.es3Prefab = { refs: { "prefab-child-id": "vehicle-child" } };
+  root.newGOArray_Cars = pm(null, [car]);
+  root[car.name] = itemRecord(car.name, 900, { Liquid: { __type: "float", value: 10 }, LiquidCapacity: { __type: "float", value: 20 } });
+  let doc = inspect(JSON.stringify(root));
+  assert.equal(doc.items[0].associatedVehicle, car.name);
+  assert.match(doc.items[0].location, /mounting\/storage unknown/);
+  assert.equal(doc.items[0].attachedTo, null);
+  assert.deepEqual(doc.vehicles[0].parts, []);
+  assert.equal(doc.vehicles[0].fieldIds.some(id => doc.items[0].fieldIds.includes(id)), false);
+  assert.equal(doc.fields.find(field => field.id.endsWith(":Condition")).section, "items");
+  const other = gameObject("car(Clone)3", 901, 9001);
+  other.es3Prefab = car.es3Prefab;
+  root.newGOArray_Cars.value.array.push(other);
+  root[other.name] = itemRecord(other.name, 901, {});
+  doc = inspect(JSON.stringify(root));
+  assert.equal(doc.items[0].associatedVehicle, null);
+  assert.equal(doc.items[0].location, "Unresolved parent / container");
+  assert.match(doc.items[0].warnings.join(" "), /more than one vehicle/);
 });

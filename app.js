@@ -140,19 +140,22 @@ function render() {
     $("sections").append(tab);
   }
   $("sections").hidden = !doc.sections.length;
-  for (const [index, field] of doc.fields.entries()) {
-    const groupKey = `${field.section}\u0000${field.group}`;
-    const itemOnly = field.section === "items" && itemFieldIds.has(field.id);
-    let group = groups.get(groupKey);
-    if (!itemOnly && !group) {
-      group = document.createElement("fieldset");
+  function groupFor(field) {
+    const key = `${field.section}\u0000${field.group}`;
+    if (!groups.has(key)) {
+      const group = document.createElement("fieldset");
       group.dataset.section = field.section;
       const legend = document.createElement("legend");
       legend.textContent = field.group;
       group.append(legend);
-      groups.set(groupKey, group);
+      groups.set(key, group);
       $("fields").append(group);
     }
+    return groups.get(key);
+  }
+  for (const [index, field] of doc.fields.entries()) {
+    const itemOnly = field.section === "items" && itemFieldIds.has(field.id);
+    const group = itemOnly ? null : groupFor(field);
     const row = document.createElement("div");
     row.className = "field";
     const label = document.createElement("label");
@@ -186,12 +189,26 @@ function render() {
       if (itemFieldIds.has(field.id)) fieldHomes.set(field.id, group);
     }
   }
+  for (const field of doc.readOnlyFields) {
+    const row = document.createElement("div");
+    row.className = "field";
+    const label = document.createElement("div");
+    label.className = "field-label";
+    label.textContent = `${field.label} (read-only)`;
+    const reason = document.createElement("small");
+    reason.textContent = field.reason;
+    label.append(reason);
+    const value = document.createElement("span");
+    value.textContent = String(field.value);
+    row.append(label, value);
+    groupFor(field).append(row);
+  }
   $("fields").hidden = false;
   $("empty").hidden = true;
   $("backup").disabled = false;
   $("reset").disabled = false;
   $("filename").textContent = fileName;
-  $("details").textContent = `${doc.kind} \u00b7 ${doc.fields.length} verified fields \u00b7 original preserved`;
+  $("details").textContent = `${doc.kind} \u00b7 ${doc.fields.length} editable fields \u00b7 ${doc.readOnlyFields.length} other read-only values \u00b7 original preserved`;
   renderItems();
   renderVehicles();
   selectSection(activeSection);
@@ -210,7 +227,7 @@ function selectSection(sectionId) {
   }
   $("items-panel").hidden = sectionId !== "items";
   $("vehicles-panel").hidden = sectionId !== "vehicles";
-  $("fields").hidden = !doc || !doc.fields.some(field => field.section === sectionId && (sectionId !== "items" || !itemFieldIds.has(field.id)));
+  $("fields").hidden = !doc || ![...doc.fields, ...doc.readOnlyFields].some(field => field.section === sectionId && (sectionId !== "items" || !itemFieldIds.has(field.id)));
   if (sectionId === "items") renderItemEditor();
   else restoreItemFields();
 }
@@ -235,6 +252,7 @@ function renderItemEditor() {
     ? ` Local position (parent-relative): ${["x", "y", "z"].map(axis => `${axis} ${numericText(item.position[axis])}`).join(", ")}.`
     : "";
   $("item-editor-note").textContent = `${item.location}. Instance ref ${item.ref || "unavailable"}.${position}`;
+  if (item.liquid?.capacitySource) $("item-editor-note").textContent += ` Liquid bound: ${item.liquid.capacitySource}`;
   for (const id of item.fieldIds) $("item-fields").append(fieldRows.get(id));
   $("item-edit-status").textContent = item.fieldIds.length
     ? "Edit this existing item, then review and save or export. Other item drafts are kept when you change selection."
@@ -266,9 +284,10 @@ function renderItems() {
   $("item-filter").value = "";
   const itemCount = doc.items.length;
   const unparented = doc.items.filter(item => item.parentRef === null).length;
-  const unresolved = doc.items.filter(item => item.parentRef !== null && !item.attachedTo).length;
+  const associated = doc.items.filter(item => item.associatedVehicle).length;
+  const unresolved = doc.items.filter(item => item.parentRef !== null && !item.attachedTo && !item.associatedVehicle).length;
   $("items-note").textContent = itemCount
-    ? `${itemCount} saved item object${itemCount === 1 ? "" : "s"}. ${unparented} unparented/world-root; ${unresolved} with an unresolved parent. Loose camp items and mounted parts can be selected below; editing their saved values does not require proving player ownership. Unknown containers are not counted as carried inventory.`
+    ? `${itemCount} saved item object${itemCount === 1 ? "" : "s"}. ${unparented} unparented/world-root; ${associated} vehicle-associated by prefab references; ${unresolved} with an unresolved parent. Vehicle association does not establish mounting or storage, and unknown containers are not counted as carried inventory. Select an item to edit its supported saved values.`
     : "This save contains no newGOArray_Items list.";
   if (!itemCount) {
     const row = document.createElement("tr");
@@ -295,7 +314,7 @@ function renderItems() {
       name.append(readOnly);
     }
     const location = document.createElement("td");
-    location.className = `location${item.parentRef !== null && !item.attachedTo ? " unknown" : ""}`;
+    location.className = `location${item.parentRef !== null && !item.attachedTo && !item.associatedVehicle ? " unknown" : ""}`;
     location.textContent = item.active === false ? `Inactive · ${item.location}` : item.location;
     if (item.parentRef) {
       const reference = document.createElement("small");

@@ -18,7 +18,12 @@
     toggleHeadbob: "Head bob",
     toggleFPS: "Show FPS",
     toggleFootstepSounds: "Footstep sounds",
-    toggleADS: "Toggle aim down sights"
+    toggleADS: "Toggle aim down sights",
+    automatic_gearbox: "Automatic gearbox",
+    autoclutch: "Automatic clutch",
+    normalizeinput: "Normalize driving input",
+    bloom: "Bloom",
+    sharpen: "Sharpen"
   };
   const volumes = {
     ambient_volume: "Ambient volume",
@@ -34,6 +39,12 @@
     { id: "vehicles", label: "Vehicles" },
     { id: "settings", label: "Settings" }
   ];
+  // Exact prefab IDs and live LiquidAmount FSM variables in the inspected game assets.
+  const liquidPrefabs = {
+    "5864412579365047585": { name: "MotorOil_Can_Small", capacity: 5 },
+    "6858519991654959144": { name: "Gasoline_Can", capacity: 20 },
+    "4230013134874058846": { name: "Water_Can_Plastic", capacity: 13 }
+  };
   const weaponAmmoLabels = {
     ammoakms: "AKMS (saved item ID: akms)",
     ammoakmdrum: "AKM drum",
@@ -156,6 +167,7 @@
   function inspect(text) {
     const tree = parse(text);
     const fields = [];
+    const readOnlyFields = [];
     const items = [];
     const vehicles = [];
     function add(id, label, group, node, type, min, max, section, description) {
@@ -167,7 +179,10 @@
         throw new Error(`Unsupported structure for ${id}; this save version cannot be edited safely.`);
       }
       const field = { id, label, group, type, min, max, section, description, value: scalar.value, start: scalar.start, end: scalar.end };
-      validate(field, scalar.value);
+      if (type !== "bool" && (!Number.isFinite(scalar.value) || (type === "int" && !Number.isInteger(scalar.value)) || scalar.value < min || scalar.value > max)) {
+        readOnlyFields.push({ ...field, reason: `Outside this editor's supported ${type === "int" ? "whole-number " : ""}range (${min} to ${max}); preserved unchanged. Other supported values can still be edited.` });
+        return null;
+      }
       fields.push(field);
       return field;
     }
@@ -182,7 +197,26 @@
         add(`Ammo.${name}`, name.replace(/^ammo_/, "").replaceAll("_", " "), "Supplies", at(ammo, "value", "objs", name), "int", 0, 2147483647, "player");
       }
     }
-    for (const [name, label] of Object.entries(switches)) add(name, label, "Gameplay settings", at(tree, name), "bool", undefined, undefined, "settings");
+    const globals = at(tree, "global");
+    if (at(globals, "__type")?.value === wrapper) {
+      const data = at(globals, "value", "objs");
+      for (const name of ["Hunger", "Thirst", "Fatigue", "Radiation"]) {
+        add(`global.${name}`, name, "Survival state", at(data, name), "float", 0, 100, "player", "Saved global state; the inspected gameplay FSM clamps this value from 0 to 100. Higher values are worse.");
+      }
+      for (const [name, reason] of [
+        ["Money", "The saved integer is understood, but safe purchase/debt bounds have not been verified."],
+        ["Sanity", "The active gameplay FSM clamps 0 to 100, but inspected saves also contain negative values; behavior with insanity disabled has not been verified."],
+        ["PlayerHealth", "A separate saved health copy; its load precedence relative to Player.Health has not been verified."],
+        ...["automatic_gearbox", "autoclutch", "normalizeinput"].map(name => [name, "Game-slot copy only. Edit the verified per-key setting in SaveSettings.es3; duplicate scopes are not synchronized."])
+      ]) {
+        const node = at(data, name);
+        const value = node?.implicit || at(node, "value");
+        if (value && ["number", "boolean"].includes(value.kind)) {
+          readOnlyFields.push({ id: `global.${name}`, label: `global.${name}`, group: "Other saved state (read-only)", section: "player", value: value.value, reason });
+        }
+      }
+    }
+    for (const [name, label] of Object.entries(switches)) add(name, label, "Gameplay settings", at(tree, name), "bool", undefined, undefined, "settings", "This file's top-level setting only. The game loads this key from SaveSettings.es3; game-slot copies are not synchronized.");
     for (const [name, label] of Object.entries(volumes)) add(name, label, "Audio settings", at(tree, name), "float", 0, 1, "settings");
     add("FOV", "Field of view", "Display settings", at(tree, "FOV"), "float", 30, 120, "settings");
 
@@ -246,6 +280,7 @@
 
     const carMounts = new Map();
     const vehicleByRef = new Map();
+    const prefabVehicles = new Map();
     for (const car of carObjects) {
       const associated = wrapperOwner(car.name);
       const matched = associated && car.ref && associated.ref === car.ref;
@@ -262,6 +297,11 @@
       };
       if (matched && objectRefCount === 1) {
         vehicleByRef.set(car.ref, vehicle);
+        for (const [, ref] of props(at(car.object, "es3Prefab", "refs"))) {
+          if (ref.kind !== "string") continue;
+          if (!prefabVehicles.has(ref.value)) prefabVehicles.set(ref.value, new Set());
+          prefabVehicles.get(ref.value).add(vehicle);
+        }
         for (const [mountKey, mountLabel] of [["hinge_engine", "Engine"], ["hinge_radiator", "Radiator"], ["hinge_exhaust", "Exhaust"]]) {
           const transformId = at(associated.data, mountKey, "transformID")?.value;
           if (typeof transformId === "string") {
@@ -306,6 +346,7 @@
         ammo: null,
         liquid: null,
         loadedAmmo: null,
+        associatedVehicle: null,
         readOnlyFields: [],
         fieldIds: [],
         matchedRecord: !!matched,
@@ -339,6 +380,14 @@
       } else if (partLinks.length > 1 || linkedCars.length > 1) {
         itemRecord.location = "Ambiguous vehicle mount";
         itemRecord.warnings.push("More than one vehicle mount matches this parent reference; component association is not editable.");
+      } else if (referenceIsUnique && item.parentRef) {
+        const candidates = [...(prefabVehicles.get(item.parentRef) || [])];
+        if (candidates.length === 1) {
+          itemRecord.associatedVehicle = candidates[0].name;
+          itemRecord.location = `Vehicle-associated: ${candidates[0].name} (prefab reference; mounting/storage unknown)`;
+        } else if (candidates.length > 1) {
+          itemRecord.warnings.push("Parent reference occurs in more than one vehicle prefab map; vehicle association is withheld.");
+        }
       }
 
       if (matched) {
@@ -371,10 +420,19 @@
         } else if (at(associated.data, "ammo")) itemRecord.warnings.push(ammoCount.error || "Item ammo must be a nonnegative signed 32-bit integer; shown read-only.");
 
         const liquid = numericValue(at(associated.data, "Liquid"), "float", item.name);
-        const capacity = numericValue(at(associated.data, "LiquidCapacity"), "float", item.name);
+        const capacityNode = at(associated.data, "LiquidCapacity");
+        const prefabId = at(item.object, "es3Prefab", "prefabId")?.value;
+        const knownPrefab = Object.hasOwn(liquidPrefabs, prefabId) ? liquidPrefabs[prefabId] : null;
+        const verifiedPrefab = knownPrefab && readableName(item.name) === knownPrefab.name &&
+          at(associated.owner, "es3Prefab", "prefabId")?.value === prefabId ? knownPrefab : null;
+        const capacity = !capacityNode && verifiedPrefab
+          ? { value: verifiedPrefab.capacity }
+          : numericValue(capacityNode, "float", item.name);
         if (liquid.value !== undefined && capacity.value !== undefined && capacity.value > 0 && liquid.value >= 0 && liquid.value <= capacity.value) {
-          const field = add(`${itemRecord.id}:Liquid`, `${item.name} liquid amount`, "Existing item liquids", liquid.node, "float", 0, capacity.value, "items", "This item's saved Liquid amount, bounded by its own saved LiquidCapacity. Units are not specified by the save.");
+          const capacitySource = !capacityNode && verifiedPrefab ? `Verified ${verifiedPrefab.name} prefab ${prefabId}; LiquidAmount FSM capacity ${capacity.value}.` : null;
+          const field = add(`${itemRecord.id}:Liquid`, `${item.name} liquid amount`, "Existing item liquids", liquid.node, "float", 0, capacity.value, "items", capacitySource || "This item's saved Liquid amount, bounded by its own saved LiquidCapacity. Units are not specified by the save.");
           itemRecord.liquid = { value: field.value, capacity: capacity.value };
+          if (capacitySource) itemRecord.liquid.capacitySource = capacitySource;
           itemRecord.fieldIds.push(field.id);
         }
 
@@ -383,7 +441,7 @@
           const value = node.implicit || at(node, "value");
           if (!value || !["number", "boolean"].includes(value.kind) || editableKeys.has(name)) continue;
           const reason = name === "Liquid"
-            ? "A valid amount and matching capacity are not both stored on this item; no capacity or units are guessed."
+            ? "No valid saved capacity or exact verified prefab capacity supports this amount; no capacity or units are guessed."
             : name === "LiquidCapacity"
               ? "Saved capacity is a limit, not an editable amount."
               : ["Quantity", "Condition", "ammo"].includes(name)
@@ -430,14 +488,14 @@
         if (item.attachedTo?.startsWith(`${vehicle.name} · `) && !vehicle.parts.includes(item)) vehicle.parts.push(item);
       }
     }
-    if (!fields.length) throw new Error("No supported Apocalypter fields found. Open SaveGameN.es3 or SaveSettings.es3.");
+    if (!fields.length && !readOnlyFields.length) throw new Error("No supported Apocalypter fields found. Open SaveGameN.es3 or SaveSettings.es3.");
+    const sectionFields = [...fields, ...readOnlyFields];
     const presentSections = sections.filter(section =>
-      section.id === "items" ? items.length > 0 || fields.some(field => field.section === "items") :
-      section.id === "vehicles" ? vehicles.length > 0 || fields.some(field => field.section === "vehicles") :
-      section.id === "player" ? fields.some(field => field.section === "player") :
-      fields.some(field => field.section === section.id)
+      section.id === "items" ? items.length > 0 || sectionFields.some(field => field.section === "items") :
+      section.id === "vehicles" ? vehicles.length > 0 || sectionFields.some(field => field.section === "vehicles") :
+      sectionFields.some(field => field.section === section.id)
     );
-    return { fields, items, vehicles, sections: presentSections, kind: player ? "Game save" : "Settings", text };
+    return { fields, readOnlyFields, items, vehicles, sections: presentSections, kind: player || globals ? "Game save" : "Settings", text };
   }
 
   function serialize(text, changes) {
