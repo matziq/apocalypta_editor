@@ -1,6 +1,12 @@
 "use strict";
 const Save = require("./save-format.js");
 
+function validateOriginal(bytes) {
+  if (!Buffer.isBuffer(bytes) || bytes.length > Save.MAX_BYTES) throw new Error("Save exceeds the 20 MiB limit.");
+  Save.inspect(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes));
+  return bytes;
+}
+
 function prepareEdit(bytes, changes) {
   if (!Buffer.isBuffer(bytes) || bytes.length > Save.MAX_BYTES) throw new Error("Save exceeds the 20 MiB limit.");
   if (!changes || typeof changes !== "object" || Array.isArray(changes)) throw new Error("Expected a map of scalar edits.");
@@ -25,7 +31,7 @@ if (require.main === module) {
     try {
       const request = JSON.parse(input);
       const bytes = Buffer.from(request.originalBase64, "base64");
-      process.stdout.write(JSON.stringify({ contentBase64: prepareEdit(bytes, request.changes).toString("base64") }));
+      process.stdout.write(JSON.stringify({ contentBase64: (request.inspectOnly === true ? validateOriginal(bytes) : prepareEdit(bytes, request.changes)).toString("base64") }));
     } catch (error) {
       process.stdout.write(JSON.stringify({ error: error.message.slice(0, 1000) }));
       process.exitCode = 1;
@@ -33,4 +39,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { prepareEdit };
+module.exports = { prepareEdit, validateOriginal };

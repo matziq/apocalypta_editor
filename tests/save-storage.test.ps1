@@ -97,11 +97,11 @@ $manual = Save-OpenedDocument $source @{ peacefulMode = $true } $true $nodePath
 if ($manual.backupPath -cne $loadBackup) { throw "Manual save did not reuse an identical load-time backup." }
 $manual = Save-OpenedDocument $source @{ peacefulMode = $false } $true $nodePath
 if ($manual.backupPath -ceq $loadBackup) { throw "Manual save did not preserve the changed preceding bytes." }
-[IO.File]::WriteAllBytes($loadBackup, $external)
+[IO.File]::WriteAllBytes($source.LoadBackup, $external)
 Assert-Fails { Save-OpenedDocument $source @{ peacefulMode = $true } $true $nodePath -Autosave $true } "backup is missing or changed"
 Assert-BytesEqual ([IO.File]::ReadAllBytes($source.Path)) $original
 $fresh = Open-BackedUpSave $source.Path
-if ($fresh.LoadBackup -ceq $loadBackup) { throw "Open reused a corrupted backup." }
+if ($fresh.LoadBackup -ceq $source.LoadBackup) { throw "Open reused a corrupted backup." }
 [IO.File]::WriteAllBytes($source.Path, $external)
 Assert-Fails { Save-OpenedDocument $fresh @{ peacefulMode = $true } $true $nodePath -Autosave $true } "changed outside"
 

@@ -44,7 +44,7 @@ FORM: Familiar desktop utility, with an in-place before/after review instead of 
         <p id="autosave-status" role="status" aria-live="polite">Native-opened files with Node.js support autosave; it is off by default.</p>
       </div>
       <h2>Start with a save</h2>
-      <p>Close the game first. The native launcher opens the newest numbered slot and verifies an original backup. Choose another slot or settings file below.</p>
+      <p>Close the game first. The native launcher opens the newest numbered slot using your saved backup limit. Choose another slot or settings file below.</p>
       <div id="native-picker-controls" hidden>
         <button id="native-picker" type="button" aria-label="Choose File in Windows save folder">Choose File</button>
         <p id="picker-hint" class="picker-hint" role="status" aria-live="polite">Opens the current Windows user's Apocalypter save folder.</p>
@@ -57,6 +57,11 @@ FORM: Familiar desktop utility, with an in-place before/after review instead of 
       <p class="path">Windows save folder<br><code>%USERPROFILE%\AppData\LocalLow\SawyerK Games\Apocalypter</code></p>
       <hr>
       <h2>Save safely</h2>
+      <label class="filter-label" for="backup-limit">Backups to keep per save</label>
+      <input id="backup-limit" type="number" min="0" max="9007199254740991" step="1" placeholder="3" disabled aria-describedby="backup-limit-hint">
+      <button id="apply-backup-limit" type="button" disabled>Apply backup limit</button>
+      <p id="backup-limit-hint">Default: 3. Applying removes excess editor backups for the open file now; other files use the limit when opened or saved. 0 removes all eligible backups and disables recovery copies. Downloaded copies are separate and are never pruned.</p>
+      <p id="backup-status" role="status" aria-live="polite"></p>
       <p id="source-status" role="status" aria-live="polite"></p>
       <p>Manual Save asks before replacing the native-opened file. Autosave on change is explicit consent to save committed valid changes without another prompt. Export a separate copy instead if you prefer.</p>
       <button id="backup" disabled>Download original backup</button>

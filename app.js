@@ -17,6 +17,9 @@ let nativeSource = null;
 let saving = false;
 let savingAutomatically = false;
 let openingNative = false;
+let backupSettingsBusy = false;
+let nativeBackupLimit = null;
+let editRevision = 0;
 let autosaveTimer = null;
 let autosaveRequested = false;
 let autosaveFailed = false;
@@ -120,6 +123,9 @@ function setupPicker() {
   const native = !!pickerToken && location.protocol === "http:" && location.hostname === "127.0.0.1";
   $("native-picker-controls").hidden = !native;
   $("browser-picker-controls").hidden = native;
+  $("backup-limit").disabled = !native;
+  $("apply-backup-limit").disabled = !native;
+  if (!native) $("backup-status").textContent = "Backup retention requires run.bat. Browser downloads are not managed or deleted by the editor.";
   $("browser-picker-hint").textContent = native
     ? "Native connection unavailable. This browser fallback cannot control the starting folder; relaunch run.bat for the save-folder picker."
     : "This is the browser-only version. Launch run.bat for the Windows save-folder picker and backed-up overwrite saves.";
@@ -142,6 +148,77 @@ $("season-select").addEventListener("change", () => {
 });
 
 function message(text) { $("message").textContent = text; }
+function checkedBackupLimit(value) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new Error("Backup limit must be a whole number from 0 to 9007199254740991.");
+  return value;
+}
+function recoveryAvailable(source = nativeSource) {
+  return source?.backupLimit === 0 || !!source?.backupPath;
+}
+function backupFeedback(text, error = false) {
+  $("backup-status").textContent = text;
+  $("backup-status").dataset.error = String(error);
+}
+function updateSourceStatus() {
+  if (!doc) return;
+  $("source-status").textContent = nativeSource
+    ? `Source: ${nativeSource.path}. Loaded version modified ${new Date(nativeSource.modifiedUtc).toLocaleString()}. ${nativeSource.backupLimit === 0 ? "Backups disabled: no recovery copy is created." : nativeSource.retentionWarning ? "Recovery state needs attention; see the backup warning." : `Verified recovery backup: ${nativeSource.backupPath}`}`
+    : "Browser file: no automatic disk backup or in-place saving. Download an original backup and export a copy.";
+}
+async function applyBackupLimit() {
+  if (saving || openingNative || backupSettingsBusy) return;
+  let limit;
+  try { limit = checkedBackupLimit($("backup-limit").value.trim() === "" ? NaN : Number($("backup-limit").value)); }
+  catch (error) { $("backup-limit").setAttribute("aria-invalid", "true"); backupFeedback(error.message, true); return; }
+  $("backup-limit").removeAttribute("aria-invalid");
+  if (!window.confirm(`${limit === 0 ? "Disable recovery backups and remove ALL eligible editor backups" : `Keep at most ${limit} backups per save and remove excess editor backups`}${nativeSource ? ` for:\n\n${nativeSource.path}` : ""}?\n\n${limit === 0 ? "There will be no automatic recovery copy if a save is damaged or overwritten. " : "The verified recovery point is retained. "}Other files use this saved limit when next opened or saved. Unrelated files and downloaded backups are not removed.`)) {
+    backupFeedback(`Backup-limit change canceled. Saved limit: ${nativeBackupLimit ?? "unavailable"}; drafts are unchanged.`);
+    return;
+  }
+  const resumeQueued = autosaveRequested;
+  const revision = editRevision;
+  cancelQueuedAutosave();
+  backupSettingsBusy = true;
+  $("apply-backup-limit").disabled = true;
+  $("backup-limit").disabled = true;
+  $("native-picker").disabled = true;
+  $("file").disabled = true;
+  if (doc) refresh();
+  try {
+    const response = await fetch("/api/retention", {
+      method: "POST", headers: { "X-Editor-Token": pickerToken, "Content-Type": "application/json" },
+      body: JSON.stringify({ backupLimit: limit, ...(nativeSource ? { handle: nativeSource.handle } : {}) })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `Retention request failed (${response.status}).`);
+    nativeBackupLimit = checkedBackupLimit(result.backupLimit);
+    $("backup-limit").value = nativeBackupLimit;
+    if (nativeSource) {
+      nativeSource.backupLimit = nativeBackupLimit;
+      nativeSource.backupPath = result.backupPath;
+      nativeSource.retentionWarning = result.retentionWarning || "";
+    }
+    updateSourceStatus();
+    backupFeedback(result.retentionWarning
+      ? `Limit ${nativeBackupLimit} saved, but cleanup is incomplete: ${result.retentionWarning} Autosave is paused; resolve the problem and apply again.`
+      : nativeSource
+        ? `${nativeBackupLimit === 0 ? "Backups disabled; eligible backups removed for the open file. No automatic recovery copy." : `Backup limit ${nativeBackupLimit} saved; the open file's verified recovery point is retained.`} Other files use this limit when next opened or saved.`
+        : `Backup limit ${nativeBackupLimit} saved. No file is open; no backups were pruned now. It applies before the next native open.${nativeBackupLimit === 0 ? " Recovery backups will be disabled." : ""}`, !!result.retentionWarning);
+  } catch (error) {
+    if (nativeSource) nativeSource.retentionWarning = "Backup-policy change could not be confirmed. Apply the limit again or reopen to verify recovery.";
+    cancelQueuedAutosave();
+    backupFeedback(`${error.message} Drafts are unchanged. If the connection failed, the setting may have been saved; retry Apply to check and finish cleanup.`, true);
+  } finally {
+    backupSettingsBusy = false;
+    $("apply-backup-limit").disabled = false;
+    $("backup-limit").disabled = false;
+    $("native-picker").disabled = false;
+    $("file").disabled = false;
+    if (doc) refresh();
+    if (!nativeSource?.retentionWarning && (autosaveRequested || resumeQueued && editRevision === revision)) requestAutosave();
+  }
+}
+$("apply-backup-limit").addEventListener("click", applyBackupLimit);
 function numericText(value) {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value);
 }
@@ -180,11 +257,12 @@ function refresh() {
   $("review").hidden = !changes.size;
   $("dirty").textContent = changes.size ? `${changes.size} changed` : errors.length ? "Invalid values" : "Original values";
   $("export").disabled = !!errors.length || !changes.size;
-  for (const id of saveButtons) $(id).disabled = saving || openingNative || !!errors.length || !changes.size || !nativeSource?.canSave;
-  $("autosave").disabled = !nativeSource?.canSave || !nativeSource?.backupPath || openingNative;
+  for (const id of saveButtons) $(id).disabled = saving || openingNative || backupSettingsBusy || !!errors.length || !changes.size || !nativeSource?.canSave;
+  $("autosave").disabled = !nativeSource?.canSave || !recoveryAvailable() || openingNative || backupSettingsBusy;
   $("autosave").checked = preferences.autosave;
   $("maximize-items").disabled = saving && !savingAutomatically || !doc.items.length;
   if (!nativeSource?.canSave) $("autosave-status").textContent = "Autosave unavailable: open through run.bat with Node.js 18+; browser files support export only.";
+  else if (nativeSource.retentionWarning) $("autosave-status").textContent = "Autosave paused: backup cleanup is incomplete. Resolve the error and apply the backup limit again.";
   else if (!preferences.autosave) $("autosave-status").textContent = "Autosave is off. Changes stay staged until a confirmed Save.";
   else if (autosaveFailed) $("autosave-status").textContent = `Autosave stopped after an error: ${autosaveFailureMessage}. Drafts are kept; resolve the problem, then turn autosave off and on to retry.`;
   else if (errors.length) $("autosave-status").textContent = "Autosave paused: correct invalid drafts and commit the corrected value.";
@@ -194,7 +272,7 @@ function refresh() {
     ? "Resolve invalid values before saving or exporting."
     : changes.size
       ? nativeSource?.canSave
-        ? `Review changes, then save over ${nativeSource.path} with an automatic backup, or export a copy.`
+        ? `Review changes, then save over ${nativeSource.path}${nativeSource.backupLimit === 0 ? " WITHOUT a recovery backup" : " with a verified recovery backup"}, or export a copy.`
         : "Export a copy, or reopen through the native picker with Node.js available to save in place."
       : nativeSource ? `No pending changes. Source: ${nativeSource.path}` : "No pending changes. Browser-opened files support export only.";
   message(errors.join(" "));
@@ -265,6 +343,7 @@ function render() {
       input.setAttribute("aria-description", field.description);
     }
     input.addEventListener("input", refresh);
+    input.addEventListener("input", () => { editRevision++; });
     input.addEventListener("input", cancelQueuedAutosave);
     input.addEventListener("change", requestAutosave);
     input.addEventListener("keydown", event => {
@@ -300,9 +379,7 @@ function render() {
   $("reset").disabled = false;
   $("filename").textContent = fileName;
   $("details").textContent = `${doc.kind} \u00b7 ${doc.fields.length} editable fields \u00b7 ${doc.readOnlyFields.length} other read-only values \u00b7 original preserved`;
-  $("source-status").textContent = nativeSource
-    ? `Source: ${nativeSource.path}. Loaded version modified ${new Date(nativeSource.modifiedUtc).toLocaleString()}. Verified original backup: ${nativeSource.backupPath}`
-    : "Browser file: no automatic disk backup or in-place saving. Download an original backup and export a copy.";
+  updateSourceStatus();
   renderItems();
   renderVehicles();
   selectSection(activeSection);
@@ -638,10 +715,10 @@ function cancelQueuedAutosave() {
 }
 function requestAutosave() {
   refresh();
-  if (!preferences.autosave || autosaveFailed || !nativeSource?.canSave || !nativeSource.backupPath) return;
+  if (!preferences.autosave || autosaveFailed || !nativeSource?.canSave || !recoveryAvailable() || nativeSource.retentionWarning) return;
   autosaveRequested = true;
   clearTimeout(autosaveTimer);
-  if (saving) return;
+  if (saving || backupSettingsBusy) return;
   autosaveTimer = setTimeout(() => { autosaveTimer = null; void saveDocument(true); }, 350);
 }
 $("autosave").addEventListener("change", () => {
@@ -652,13 +729,13 @@ $("autosave").addEventListener("change", () => {
   refresh();
   if (preferences.autosave) requestAutosave();
 });
-async function openFile(file, source = null) {
+async function openFile(file, source = null, discardConfirmed = false) {
   if (!file) return false;
-  if (saving) {
+  if (saving || backupSettingsBusy || openingNative && !discardConfirmed) {
     message("Wait for the current save operation to finish before opening another file.");
     return false;
   }
-  if (pending() && !window.confirm("Discard the pending changes and open another save?")) {
+  if (!discardConfirmed && pending() && !window.confirm("Discard the pending changes and open another save?")) {
     return false;
   }
   const generation = ++readGeneration;
@@ -692,9 +769,18 @@ async function bridgeStatus() {
   const timeout = setTimeout(() => controller.abort(), 5000);
   try {
     const response = await fetch("/api/status", { method: "POST", headers: { "X-Editor-Token": pickerToken }, signal: controller.signal });
-    if (!response.ok) throw new Error("This native bridge is unavailable or outdated. Relaunch run.bat and use its newly opened page.");
+    if (!response.ok) {
+      if (response.status === 409) {
+        const result = await response.json();
+        backupFeedback(result.error, true);
+        throw new Error(result.error);
+      }
+      throw new Error("This native bridge is unavailable or outdated. Relaunch run.bat and use its newly opened page.");
+    }
     const status = await response.json();
-    if (status.protocolVersion !== 3) throw new Error("This page is connected to an older native bridge. Relaunch run.bat and use its newly opened page.");
+    if (status.protocolVersion !== 4) throw new Error("This page is connected to an older native bridge. Relaunch run.bat and use its newly opened page.");
+    nativeBackupLimit = checkedBackupLimit(status.backupLimit);
+    $("backup-limit").value = nativeBackupLimit;
     if (!status.folderExists) throw new Error(`The current user's Apocalypter save folder does not exist: ${status.saveFolder}`);
     return status;
   } catch (error) {
@@ -703,8 +789,13 @@ async function bridgeStatus() {
   } finally { clearTimeout(timeout); }
 }
 async function openNative(latest = false) {
-  if (saving || openingNative) return;
+  if (saving || openingNative || backupSettingsBusy) return;
+  if (pending() && !window.confirm("Discard the pending changes and choose another native save? Drafts stay staged if you cancel the picker. No backup or pruning is done if you cancel here.")) return;
   openingNative = true;
+  for (const id of ["fields", "items-panel", "vehicles-panel", "player-actions"]) $(id).inert = true;
+  $("reset").disabled = true;
+  $("backup-limit").disabled = true;
+  $("apply-backup-limit").disabled = true;
   cancelQueuedAutosave();
   const button = $("native-picker");
   button.disabled = true;
@@ -715,7 +806,7 @@ async function openNative(latest = false) {
     const status = await bridgeStatus();
     button.textContent = latest ? "Opening newest slot..." : "Waiting for Windows dialog...";
     $("picker-hint").textContent = latest
-      ? `Opening the most recently modified SaveGameN.es3 in ${status.saveFolder} and verifying its backup.`
+      ? `Opening the most recently modified SaveGameN.es3 in ${status.saveFolder} with backup limit ${nativeBackupLimit}.`
       : `Windows picker requested for ${status.saveFolder}. Select a file or cancel in "Choose an Apocalypter save"; check the taskbar if necessary.`;
     const response = await fetch(latest ? "/api/latest" : "/api/pick", {
       method: "POST",
@@ -729,12 +820,18 @@ async function openNative(latest = false) {
     }
     const binary = atob(result.contentBase64);
     const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
-    if (!result.source?.backupPath) throw new Error("The native bridge did not verify an original backup. Relaunch run.bat; editing is unavailable for this response.");
-    const loaded = await openFile(new File([bytes], result.name, { type: "application/octet-stream" }), result.source);
+    const actualLimit = checkedBackupLimit(result.source?.backupLimit);
+    if (actualLimit > 0 && !result.source?.backupPath) throw new Error("The native bridge did not verify an original backup. Relaunch run.bat; editing is unavailable for this response.");
+    const loaded = await openFile(new File([bytes], result.name, { type: "application/octet-stream" }), result.source, true);
     if (loaded) {
+      nativeBackupLimit = actualLimit;
+      $("backup-limit").value = actualLimit;
+      backupFeedback(result.source.retentionWarning
+        ? `Loaded, but backup cleanup is incomplete: ${result.source.retentionWarning} Autosave is paused; resolve and apply again.`
+        : actualLimit === 0 ? "Backups disabled: no recovery copy is created. Eligible editor backups were removed." : `Keeping at most ${actualLimit} editor backups per save. Verified recovery point: ${nativeSource.backupPath}`, !!result.source.retentionWarning);
       refresh();
       $("picker-hint").textContent = nativeSource?.canSave
-        ? `Loaded ${result.name}; original backup verified at ${nativeSource.backupPath}. Manual Save asks before overwriting.`
+        ? `Loaded ${result.name}; ${actualLimit === 0 ? "backups DISABLED; no recovery copy" : `recovery backup verified at ${nativeSource.backupPath}`}. Manual Save asks before overwriting.`
         : `Loaded ${result.name}. Saving in place needs Node.js 18 or newer; export remains available.`;
     }
     else if (!pending()) $("picker-hint").textContent = "The selected file was not opened. No older slot was selected; choose a file manually.";
@@ -744,6 +841,10 @@ async function openNative(latest = false) {
     $("picker-hint").textContent = "Choose a file manually, use the limited browser chooser, or relaunch with run.bat. No older slot was selected automatically.";
   } finally {
     openingNative = false;
+    for (const id of ["fields", "items-panel", "vehicles-panel", "player-actions"]) $(id).inert = false;
+    $("reset").disabled = !doc;
+    $("backup-limit").disabled = false;
+    $("apply-backup-limit").disabled = false;
     button.disabled = false;
     $("file").disabled = false;
     button.textContent = "Choose File";
@@ -791,14 +892,14 @@ $("all-vehicles").addEventListener("click", () => {
   requestAutosave();
 });
 async function saveDocument(automatic = false) {
-  if (saving || openingNative) return;
+  if (saving || openingNative || backupSettingsBusy) return;
   refresh();
   if ($("save").disabled) return;
-  if (automatic && (!preferences.autosave || autosaveFailed || !autosaveRequested || !nativeSource?.backupPath)) return;
+  if (automatic && (!preferences.autosave || autosaveFailed || !autosaveRequested || !recoveryAvailable() || nativeSource.retentionWarning)) return;
   const source = nativeSource;
   if (!automatic) {
     cancelQueuedAutosave();
-    if (!window.confirm(`Overwrite this save?\n\n${source.path}\n\nIts current bytes will be backed up before replacement (an identical verified load-time backup may be reused). Close the game first. Cancel makes no changes.`)) {
+    if (!window.confirm(`Overwrite this save?\n\n${source.path}\n\n${source.backupLimit === 0 ? "BACKUPS ARE DISABLED. No recovery copy will be created." : "Its current bytes will have a verified recovery backup before replacement. Excess editor backups are removed according to your saved limit."} Close the game first. Cancel makes no changes.`)) {
       message("Save canceled; queued writes were canceled and drafts remain staged.");
       return;
     }
@@ -814,6 +915,8 @@ async function saveDocument(automatic = false) {
   $("native-picker").disabled = true;
   $("file").disabled = true;
   $("reset").disabled = true;
+  $("backup-limit").disabled = true;
+  $("apply-backup-limit").disabled = true;
   $("vehicle-select").disabled = true;
   $("repair-vehicle").disabled = true;
   $("topoff-vehicle").disabled = true;
@@ -824,7 +927,7 @@ async function saveDocument(automatic = false) {
     const response = await fetch("/api/save", {
       method: "POST",
       headers: { "X-Editor-Token": pickerToken, "Content-Type": "application/json" },
-      body: JSON.stringify({ handle: source.handle, changes: Object.fromEntries(submitted), confirmed: true, ...(automatic ? { autosave: true } : {}) })
+      body: JSON.stringify({ handle: source.handle, backupLimit: source.backupLimit, changes: Object.fromEntries(submitted), confirmed: true, ...(automatic ? { autosave: true } : {}) })
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || `Save failed (${response.status}).`);
@@ -836,10 +939,24 @@ async function saveDocument(automatic = false) {
     const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
     doc = ApocalypterSave.inspect(text);
     originalBytes = bytes;
+    source.backupLimit = checkedBackupLimit(result.backupLimit);
+    source.backupPath = result.backupPath;
+    source.retentionWarning = result.retentionWarning || "";
+    nativeBackupLimit = source.backupLimit;
+    $("backup-limit").value = nativeBackupLimit;
     if (!automatic) render();
     else { updateSavedSummaries(); refresh(); }
-    if (automatic) $("autosave-status").textContent = `Autosaved ${new Date().toLocaleTimeString()}. ${source.path}`;
-    else message(`Saved ${source.path}. Backup: ${result.backupPath}`);
+    updateSourceStatus();
+    if (result.retentionWarning) {
+      cancelQueuedAutosave();
+      backupFeedback(`Save succeeded, but backup cleanup is incomplete: ${result.retentionWarning} Autosave is paused; resolve and apply the limit again.`, true);
+      if (automatic) $("autosave-status").textContent = "Autosaved, but backup cleanup failed; further autosaves are paused.";
+      else message(`Saved ${source.path}; backup cleanup failed. See the backup warning.`);
+    } else {
+      backupFeedback(source.backupLimit === 0 ? "Backups disabled: no automatic recovery copy." : `Keeping at most ${source.backupLimit} editor backups per save. Recovery backup: ${source.backupPath}`);
+      if (automatic) $("autosave-status").textContent = `Autosaved ${new Date().toLocaleTimeString()}. ${source.path}`;
+      else message(`Saved ${source.path}. ${source.backupLimit === 0 ? "Backups disabled; no recovery copy." : `Recovery backup: ${result.backupPath}`}`);
+    }
   } catch (error) {
     if (automatic) { autosaveFailed = true; autosaveFailureMessage = error.message; cancelQueuedAutosave(); }
     message(`Save failed: ${error.message} Pending edits remain available. If the connection failed after writing, reopen the file to check its current state before retrying.`);
@@ -852,6 +969,8 @@ async function saveDocument(automatic = false) {
     $("native-picker").disabled = false;
     $("file").disabled = false;
     $("reset").disabled = !doc;
+    $("backup-limit").disabled = false;
+    $("apply-backup-limit").disabled = false;
     $("vehicle-select").disabled = false;
     $("maximize-player").disabled = !doc?.fields.some(field => field.section === "player");
     $("maximize-items").disabled = !doc?.items.length;
@@ -884,7 +1003,8 @@ window.addEventListener("beforeunload", event => {
 for (const [id, text] of [
   ["theme-toggle", "Changes only this editor's light/dark appearance. It does not change save data."],
   ["season-select", "Selects this editor's seasonal color palette. It does not change the game's weather or season."],
-  ["autosave", "Consent to overwrite the exact native-opened file after each committed valid change, without a separate prompt. A verified load-time backup is required. Invalid drafts pause saving; errors stop automatic retries. Turning it off keeps pending drafts."],
+  ["autosave", "Consent to overwrite the exact native-opened file after each committed valid change, without a separate prompt. Your native backup limit applies; 0 means no recovery copy. Invalid drafts or backup cleanup errors pause saving; errors stop automatic retries. Turning it off keeps pending drafts."],
+  ["backup-limit", "Persistent native limit per original save, default 3. Apply removes excess backups made in this editor's exact timestamp/GUID format, preserving the verified recovery point. 0 disables automatic backups and removes eligible existing copies; damaged or overwritten saves then have no automatic recovery. Other files use the limit on their next open/save. Downloaded/unrelated files and links are never pruned."],
   ["editable-only", "Shows only item instances with at least one currently editable field. Combines with text search; hidden items and their drafts are not deleted."],
   ["maximize-player", "Stages editable Player & supplies values to exactly 100, except Hunger, Thirst, Fatigue and Radiation to 0. This can lower ammo values above 100. Read-only fields and invalid target drafts are skipped."],
   ["maximize-items", "Stages every saved item's editable Condition to 100 and Liquid to its verified capacity, including matched mounted parts and hidden filtered items. Never lowers values. Quantity, item ammo and weapon-type counters have no verified game maximum and are skipped, as are invalid drafts and read-only values."],

@@ -17,6 +17,24 @@ test("server-side validator uses the lossless scalar serializer", () => {
   assert.throws(() => prepareEdit(original, {}), /No changes/);
 });
 
+test("native backup retention preserves recovery points and refuses unsafe cleanup", { skip: process.platform !== "win32" }, () => {
+  const parent = process.env.APOCALYPTER_TEST_OUTPUT || os.tmpdir();
+  fs.mkdirSync(parent, { recursive: true });
+  const root = fs.mkdtempSync(path.join(parent, "retention-"));
+  try {
+    const output = execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(__dirname, "backup-retention.test.ps1"), "-Root", root],
+      { encoding: "utf8", timeout: 30000 });
+    assert.match(output, /Retention tests passed/);
+  } finally {
+    for (const name of fs.readdirSync(root)) {
+      const entry = path.join(root, name);
+      if (fs.lstatSync(entry).isDirectory()) fs.rmdirSync(entry);
+      else fs.unlinkSync(entry);
+    }
+    fs.rmdirSync(root);
+  }
+});
+
 test("confirmed native writes preserve backups and refuse stale or failed replacements", {
   skip: process.platform !== "win32"
 }, () => {

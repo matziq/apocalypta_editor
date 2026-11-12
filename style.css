@@ -43,6 +43,9 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 28px 0; }
 .check-control { display: flex; gap: 8px; align-items: center; font-size: 13px; padding-block: 8px; }
 .check-control input { flex-shrink: 0; margin: 0; }
 #source-status, #autosave-status { font-size: 12px; overflow-wrap: anywhere; }
+#backup-limit { width: 100%; padding: 9px 10px; font: inherit; border: 1px solid var(--input-border); border-radius: 3px; background: var(--input-bg); color: var(--ink); }
+#backup-limit-hint, #backup-status { font-size: 12px; overflow-wrap: anywhere; }
+#backup-status[data-error=true] { color: var(--danger); font-weight: 600; }
 #player-actions { margin-block: 16px; }
 #player-action-status { font-size: 13px; color: var(--muted); }
 .help-trigger { display: inline-flex; align-items: center; justify-content: center; width: 25px; height: 25px; min-width: 25px; padding: 0; margin: 0 0 0 8px; border-radius: 50%; background: transparent; color: var(--accent); font-size: 13px; vertical-align: middle; }

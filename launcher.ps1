@@ -53,9 +53,9 @@ function Test-PickerRequest {
         [string]$RequestedMethod,
         [string]$RequestedHeaders
     )
-    if ($HostHeader -cne $ExpectedHost -or $Origin -cne $ExpectedOrigin -or $Path -cnotin @("/api/pick", "/api/latest", "/api/save", "/api/status")) { return $false }
+    if ($HostHeader -cne $ExpectedHost -or $Origin -cne $ExpectedOrigin -or $Path -cnotin @("/api/pick", "/api/latest", "/api/save", "/api/status", "/api/retention")) { return $false }
     if ($Method -ceq "POST") {
-        $lengthAllowed = if ($Path -ceq "/api/save") { $ContentLength -gt 0 -and $ContentLength -le 1048576 } else { $ContentLength -eq 0 }
+        $lengthAllowed = if ($Path -ceq "/api/save") { $ContentLength -gt 0 -and $ContentLength -le 1048576 } elseif ($Path -ceq "/api/retention") { $ContentLength -gt 0 -and $ContentLength -le 4096 } else { $ContentLength -eq 0 }
         return $Token -ceq $ExpectedToken -and $lengthAllowed
     }
     if ($Method -ceq "OPTIONS") {
@@ -67,16 +67,20 @@ function Test-PickerRequest {
 
 function Resolve-OpenedSaveRequest {
     param($Payload, [hashtable]$OpenedFiles)
-    $unknown = @($Payload.PSObject.Properties.Name | Where-Object { $_ -cnotin @("handle", "changes", "confirmed", "autosave") })
+    $unknown = @($Payload.PSObject.Properties.Name | Where-Object { $_ -cnotin @("handle", "changes", "confirmed", "autosave", "backupLimit") })
     if ($unknown.Count -or ($null -ne $Payload.autosave -and $Payload.autosave -isnot [bool]) -or $Payload.confirmed -isnot [bool] -or $Payload.handle -isnot [string] -or -not $OpenedFiles.ContainsKey($Payload.handle)) {
         throw "Save request must identify an opened native file; client-supplied paths are not accepted."
+    }
+    $acknowledgedLimit = ConvertTo-BackupLimit $Payload.backupLimit
+    if ($acknowledgedLimit -ne $OpenedFiles[$Payload.handle].BackupLimit) {
+        throw "The backup policy for this opened file changed. Apply your chosen backup limit again before saving; drafts remain staged."
     }
     return $OpenedFiles[$Payload.handle]
 }
 
 function Register-OpenedSave {
-    param([string]$Path, [hashtable]$OpenedFiles, [string]$NodePath)
-    $source = Open-BackedUpSave -Path $Path
+    param([string]$Path, [hashtable]$OpenedFiles, [string]$NodePath, $BackupLimit = 3)
+    $source = Open-BackedUpSave -Path $Path -BackupLimit $BackupLimit -NodePath $NodePath
     $bytes = $source.Bytes
     $source.Remove("Bytes")
     $handle = New-SessionToken
@@ -91,6 +95,8 @@ function Register-OpenedSave {
             path = $source.Path
             canSave = [bool]$NodePath
             backupPath = $source.LoadBackup
+            backupLimit = $source.BackupLimit
+            retentionWarning = $source.RetentionWarning
             modifiedUtc = $source.ModifiedUtc
         }
     }
@@ -219,8 +225,8 @@ if ($SelfTest) {
     if (-not (Test-PickerRequest @saveRequest)) { throw "Authorized bounded save request was rejected." }
     $saveRequest.ContentLength = 1048577
     if (Test-PickerRequest @saveRequest) { throw "Oversized save request was accepted." }
-    $sources = @{ "test-handle" = @{ Path = "server-bound.es3"; Hash = "test-hash" } }
-    $request = [PSCustomObject]@{ handle = "test-handle"; confirmed = $true; changes = [PSCustomObject]@{ peacefulMode = $true } }
+    $sources = @{ "test-handle" = @{ Path = "server-bound.es3"; Hash = "test-hash"; BackupLimit = 3 } }
+    $request = [PSCustomObject]@{ handle = "test-handle"; confirmed = $true; backupLimit = 3; changes = [PSCustomObject]@{ peacefulMode = $true } }
     if ((Resolve-OpenedSaveRequest $request $sources).Path -cne "server-bound.es3") { throw "Opened handle did not resolve server-side." }
     foreach ($invalidRequest in @(
         [PSCustomObject]@{ handle = "test-handle"; confirmed = $true; path = "injected.es3" },
@@ -250,6 +256,9 @@ if (-not $IsWindows -and $PSVersionTable.PSVersion.Major -ge 6) {
 
 Add-Type -AssemblyName System.Windows.Forms
 $saveFolder = if ($SaveFolderOverride) { [IO.Path]::GetFullPath($SaveFolderOverride) } else { Get-SaveFolder }
+$settingsPath = if ($SaveFolderOverride) { Join-Path $saveFolder ".apocalypter-editor-settings.json" } else {
+    Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) "ApocalypterSaveEditor\settings.json"
+}
 $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
 $nodePath = if ($nodeCommand) { $nodeCommand.Source } else { $null }
 if ($nodePath) {
@@ -257,6 +266,7 @@ if ($nodePath) {
     if ($version -notmatch '^v(\d+)\.' -or [int]$Matches[1] -lt 18) { $nodePath = $null }
 }
 $openedFiles = @{}
+$policyMutex = [Threading.Mutex]::new($false, ("Local\ApocalypterPolicy-" + (Get-SaveHash ([Text.Encoding]::UTF8.GetBytes($settingsPath.ToUpperInvariant())))))
 $token = New-SessionToken
 $port = 0
 for ($attempt = 0; $attempt -lt 12; $attempt++) {
@@ -322,7 +332,7 @@ try {
             continue
         }
 
-        if ($request.HttpMethod -ceq "OPTIONS" -and $path -cin @("/api/pick", "/api/latest", "/api/save", "/api/status")) {
+        if ($request.HttpMethod -ceq "OPTIONS" -and $path -cin @("/api/pick", "/api/latest", "/api/save", "/api/status", "/api/retention")) {
             $allowed = Test-PickerRequest -Method $request.HttpMethod -Path $path -HostHeader $hostHeader `
                 -Origin $origin -ExpectedHost $expectedHost -ExpectedOrigin $expectedOrigin `
                 -RequestedMethod $request.Headers["Access-Control-Request-Method"] `
@@ -341,6 +351,22 @@ try {
             continue
         }
 
+        $policyHeld = $false
+        if ($request.HttpMethod -ceq "POST" -and $path -cin @("/api/pick", "/api/latest", "/api/save", "/api/retention")) {
+            if (-not (Test-PickerRequest -Method $request.HttpMethod -Path $path -HostHeader $hostHeader `
+                -Origin $origin -Token $request.Headers["X-Editor-Token"] -ExpectedHost $expectedHost `
+                -ExpectedOrigin $expectedOrigin -ExpectedToken $token -ContentLength $request.ContentLength64)) {
+                Write-Json $context 403 @{ error = "Request origin, token, or size was rejected." } $expectedOrigin
+                continue
+            }
+            try { $policyHeld = $policyMutex.WaitOne(5000) }
+            catch [Threading.AbandonedMutexException] { $policyHeld = $true }
+            if (-not $policyHeld) {
+                Write-Json $context 409 @{ error = "Another editor is opening a file or changing backup policy. Finish its dialog/operation, then retry; nothing was written or pruned by this request." } $expectedOrigin
+                continue
+            }
+        }
+        try {
         if ($request.HttpMethod -ceq "POST" -and $path -ceq "/api/status") {
             $allowed = Test-PickerRequest -Method $request.HttpMethod -Path $path -HostHeader $hostHeader `
                 -Origin $origin -Token $request.Headers["X-Editor-Token"] -ExpectedHost $expectedHost `
@@ -349,11 +375,55 @@ try {
                 Write-Json $context 403 @{ error = "Bridge readiness request was rejected." } $expectedOrigin
                 continue
             }
-            Write-Json $context 200 @{
-                protocolVersion = 3
-                saveFolder = $saveFolder
-                folderExists = [bool](Test-Path -LiteralPath $saveFolder -PathType Container)
-            } $expectedOrigin
+            try {
+                $limit = Read-BackupLimit $settingsPath
+                Write-Json $context 200 @{
+                    protocolVersion = 4
+                    backupLimit = $limit
+                    saveFolder = $saveFolder
+                    folderExists = [bool](Test-Path -LiteralPath $saveFolder -PathType Container)
+                } $expectedOrigin
+            } catch {
+                Write-Json $context 409 @{ error = "Backup settings could not be read: $($_.Exception.Message) No default was substituted. Set and apply a valid backup limit to recover; automatic opening/pruning is blocked." } $expectedOrigin
+            }
+            continue
+        }
+
+        if ($request.HttpMethod -ceq "POST" -and $path -ceq "/api/retention") {
+            $allowed = Test-PickerRequest -Method $request.HttpMethod -Path $path -HostHeader $hostHeader `
+                -Origin $origin -Token $request.Headers["X-Editor-Token"] -ExpectedHost $expectedHost `
+                -ExpectedOrigin $expectedOrigin -ExpectedToken $token -ContentLength $request.ContentLength64
+            if (-not $allowed) {
+                Write-Json $context 403 @{ error = "Backup-retention request origin, token, or size was rejected." } $expectedOrigin
+                continue
+            }
+            try {
+                $reader = [IO.StreamReader]::new($request.InputStream, [Text.Encoding]::UTF8)
+                try { $payload = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+                if (@($payload.PSObject.Properties.Name | Where-Object { $_ -cnotin @("backupLimit", "handle") }).Count) { throw "Retention accepts only a limit and an optional opened-file handle; no paths." }
+                $limit = ConvertTo-BackupLimit $payload.backupLimit
+                $source = $null
+                if ($null -ne $payload.handle) {
+                    if ($payload.handle -isnot [string] -or -not $openedFiles.ContainsKey($payload.handle)) { throw "Unknown opened-file handle." }
+                    $source = $openedFiles[$payload.handle]
+                    $prepared = $source.Clone()
+                    Set-SourceBackupLimit $prepared $limit
+                }
+                Write-BackupLimit $settingsPath $limit
+                $warning = ""
+                if ($source) {
+                    foreach ($key in $prepared.Keys) { $source[$key] = $prepared[$key] }
+                    $warning = if ($source.PruningAllowed) { Invoke-BackupRetention $source.Path $limit $source.LoadBackup $source.LoadLength $source.LoadHash } else {
+                        "Node.js 18+ is unavailable. The limit was saved, but destructive pruning is deferred; existing backups were NOT removed."
+                    }
+                    $source.RetentionWarning = $warning
+                }
+                Write-Json $context 200 @{
+                    backupLimit = $limit
+                    backupPath = $(if ($source) { $source.LoadBackup } else { $null })
+                    retentionWarning = $warning
+                } $expectedOrigin
+            } catch { Write-Json $context 409 @{ error = "Could not apply backup retention: $($_.Exception.Message) The original save was not replaced." } $expectedOrigin }
             continue
         }
 
@@ -366,8 +436,9 @@ try {
                 continue
             }
             try {
+                $limit = Read-BackupLimit $settingsPath
                 $latest = Get-LatestGameSlot -Folder $saveFolder
-                $payload = Register-OpenedSave -Path $latest -OpenedFiles $openedFiles -NodePath $nodePath
+                $payload = Register-OpenedSave -Path $latest -OpenedFiles $openedFiles -NodePath $nodePath -BackupLimit $limit
                 Write-Json $context 200 $payload $expectedOrigin
             } catch {
                 Write-Json $context 409 @{ error = "Could not open the newest game slot: $($_.Exception.Message) No older slot was selected. Choose a file manually." } $expectedOrigin
@@ -387,6 +458,11 @@ try {
                 Write-Json $context 404 @{ error = "The current user's Apocalypter save folder does not exist: $saveFolder" } $expectedOrigin
                 continue
             }
+            try { $limit = Read-BackupLimit $settingsPath }
+            catch {
+                Write-Json $context 409 @{ error = "Backup settings could not be read: $($_.Exception.Message) No backup or pruning was attempted." } $expectedOrigin
+                continue
+            }
             $dialog = New-SaveDialog -Folder $saveFolder
             $owner = New-PickerOwner -Folder $saveFolder
             try {
@@ -396,7 +472,7 @@ try {
                     Write-Json $context 200 @{ canceled = $true } $expectedOrigin
                     continue
                 }
-                $payload = Register-OpenedSave -Path $dialog.FileName -OpenedFiles $openedFiles -NodePath $nodePath
+                $payload = Register-OpenedSave -Path $dialog.FileName -OpenedFiles $openedFiles -NodePath $nodePath -BackupLimit $limit
                 Write-Json $context 200 $payload $expectedOrigin
             } catch {
                 Write-Json $context 500 @{ error = "Could not read the selected save: $($_.Exception.Message)" } $expectedOrigin
@@ -420,8 +496,17 @@ try {
                 try { $body = $reader.ReadToEnd() } finally { $reader.Dispose() }
                 $payload = $body | ConvertFrom-Json
                 $source = Resolve-OpenedSaveRequest -Payload $payload -OpenedFiles $openedFiles
-                $result = Save-OpenedDocument -Source $source -Changes $payload.changes `
-                    -Confirmed $payload.confirmed -NodePath $nodePath -Autosave ([bool]$payload.autosave)
+                # Hold the acknowledged policy stable through validation, replacement, and pruning.
+                if (-not [IO.File]::Exists($settingsPath)) { Write-BackupLimit $settingsPath (Read-BackupLimit $settingsPath) }
+                $policyLock = [IO.File]::Open($settingsPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+                try {
+                    $limit = Read-BackupLimit $settingsPath
+                    if ($limit -ne $source.BackupLimit) {
+                        throw "The saved backup policy changed in another window or process. Apply your chosen backup limit again before saving; no save or pruning was performed."
+                    }
+                    $result = Save-OpenedDocument -Source $source -Changes $payload.changes `
+                        -Confirmed $payload.confirmed -NodePath $nodePath -Autosave ([bool]$payload.autosave) -BackupLimit $limit
+                } finally { $policyLock.Dispose() }
                 Write-Json $context 200 $result $expectedOrigin
             } catch {
                 Write-Json $context 409 @{ error = $_.Exception.Message } $expectedOrigin
@@ -449,9 +534,11 @@ try {
         }
 
         Write-Json $context 404 @{ error = "This local bridge route is not available." } $null
+        } finally { if ($policyHeld) { $policyMutex.ReleaseMutex() } }
     }
 } finally {
     $listener.Stop()
     $listener.Close()
+    $policyMutex.Dispose()
     Write-Output "Apocalypter Save Editor bridge stopped after one hour without requests."
 }

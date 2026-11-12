@@ -17,13 +17,121 @@ async function syntheticBridge() {
   })).json();
   const fixture = path.join(process.env.APOCALYPTER_TEST_OUTPUT || "D:\\AI_Output\\Apocalypta_editor\\save-tests", "help-ui");
   assert.equal(path.resolve(status.saveFolder), path.resolve(fixture), "Refuse to run a writing UI test against a real save folder");
-  return { origin, fixture };
+  return { origin, fixture, token };
 }
 async function launchBrowser() {
   return require(driver).chromium.launch({
     executablePath: process.env.APOCALYPTER_BROWSER_EXECUTABLE || "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe", headless: true
   });
 }
+
+test("native backup controls persist, preserve inline drafts, and honor zero and stale-policy safety", browserOptions, async () => {
+    const { origin, fixture, token } = await syntheticBridge();
+    const post = (route, body) => fetch(origin + route, {
+      method: "POST", headers: { Origin: origin, "X-Editor-Token": token, ...(body ? { "Content-Type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    const target = path.join(fixture, "SaveGame1.es3");
+    const source = index => JSON.stringify({
+      Player: { __type: "ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass", value: { objs: { Health: { __type: "float", value: index } } } }
+    });
+    const eligible = () => fs.readdirSync(fixture).filter(name => /^SaveGame1\.es3\.[0-9]{8}T[0-9]{9}Z\.[a-f0-9]{32}\.original\.bak$/.test(name));
+    await post("/api/retention", { backupLimit: 3 });
+    fs.writeFileSync(target, source(45));
+    for (let index = 0; index < 6; index++) fs.writeFileSync(`${target}.20200101T00000000${index}Z.${String(index).padStart(32, "0")}.original.bak`, source(index));
+    const browser = await launchBrowser();
+    try {
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      const errors = [];
+      const requests = [];
+      const prompts = [];
+      let accept = true;
+      page.on("pageerror", error => errors.push(error.message));
+      page.on("request", request => { if (request.url().includes("/api/")) requests.push(request.url()); });
+      page.on("dialog", async dialog => { prompts.push(dialog.message()); if (accept) await dialog.accept(); else await dialog.dismiss(); });
+      await page.goto(origin);
+      await page.waitForFunction(() => !!doc && !openingNative);
+      assert.equal(await page.locator("#backup-limit").inputValue(), "3");
+      assert.equal(eligible().length, 3);
+      const id = await page.evaluate(() => inputs.get("Player.Health").id);
+      const input = page.locator("#" + id);
+      await input.fill("76");
+      accept = false;
+      const beforeRejected = fs.readdirSync(fixture).sort();
+      const requestCount = requests.length;
+      await page.locator("#native-picker").click();
+      assert.equal(requests.length, requestCount, "Discard refusal must not call picker, create backups, or prune");
+      assert.deepEqual(fs.readdirSync(fixture).sort(), beforeRejected);
+      assert.equal(await input.inputValue(), "76");
+      accept = true;
+      await page.locator("#backup-limit").fill("0");
+      await page.locator("#apply-backup-limit").click();
+      await page.waitForFunction(() => !backupSettingsBusy && nativeSource.backupLimit === 0);
+      assert.match(prompts.at(-1), /ALL eligible editor backups/);
+      assert.equal(eligible().length, 0);
+      assert.match(await page.locator("#source-status").innerText(), /Backups disabled: no recovery/);
+      assert.equal(await input.inputValue(), "76");
+      assert.equal(await input.evaluate(element => element === inputs.get("Player.Health")), true);
+      await page.locator("#autosave").check();
+      await page.waitForFunction(() => !saving && doc.fields.find(field => field.id === "Player.Health").value === 76);
+      assert.equal(eligible().length, 0);
+      assert.match(await page.locator("#autosave-status").innerText(), /Autosaved/);
+      await page.locator("#autosave").uncheck();
+      await input.fill("");
+      await page.locator("#backup-limit").fill("1");
+      await page.locator("#apply-backup-limit").click();
+      await page.waitForFunction(() => !backupSettingsBusy && nativeSource.backupLimit === 1);
+      assert.equal(await input.inputValue(), "");
+      assert.equal(await input.getAttribute("aria-invalid"), "true");
+      assert.equal(eligible().length, 1);
+      assert.equal(JSON.parse(fs.readFileSync(target, "utf8")).Player.value.objs.Health.value, 76);
+      await input.fill("80");
+      await page.locator("#save-top").click();
+      await page.waitForFunction(() => !saving && doc.fields.find(field => field.id === "Player.Health").value === 80);
+      assert.equal(eligible().length, 1);
+      assert.equal(await page.locator("#backup-limit").inputValue(), "1");
+      await page.locator("#autosave").check();
+      await input.fill("81");
+      await input.press("Enter");
+      await page.waitForFunction(() => !saving && doc.fields.find(field => field.id === "Player.Health").value === 81);
+      assert.equal(eligible().length, 1);
+
+      // A second tab changes global policy without this tab acknowledging it.
+      const second = await browser.newPage();
+      second.on("dialog", dialog => dialog.accept());
+      await second.goto(origin);
+      await second.waitForFunction(() => !!doc && !openingNative);
+      await second.locator("#backup-limit").fill("0");
+      await second.locator("#apply-backup-limit").click();
+      await second.waitForFunction(() => !backupSettingsBusy && nativeSource.backupLimit === 0);
+      const currentBytes = fs.readFileSync(target);
+      await input.fill("82");
+      await input.press("Enter");
+      await page.waitForFunction(() => autosaveFailed);
+      assert.deepEqual(fs.readFileSync(target), currentBytes);
+      assert.equal(await input.inputValue(), "82");
+      assert.match(await page.locator("#message").innerText(), /policy changed in another window/);
+      await page.locator("#backup-limit").fill("2");
+      await page.locator("#apply-backup-limit").click();
+      await page.waitForFunction(() => !backupSettingsBusy && nativeSource.backupLimit === 2);
+      assert.equal(await input.inputValue(), "82");
+      await page.locator("#autosave").uncheck();
+      await page.locator("#autosave").check();
+      await page.waitForFunction(() => !saving && doc.fields.find(field => field.id === "Player.Health").value === 82);
+      assert.equal(eligible().length, 1);
+      await page.locator("#autosave").uncheck();
+      for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 800 }]) {
+        await page.setViewportSize(viewport);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      }
+      await page.reload();
+      await page.waitForFunction(() => !!doc && !openingNative);
+      assert.equal(await page.locator("#backup-limit").inputValue(), "2");
+      assert.equal(await page.locator("#autosave").isChecked(), false);
+      assert.deepEqual(errors, []);
+      await second.close();
+    } finally { await browser.close(); await post("/api/retention", { backupLimit: 3 }); }
+});
 test("native numeric spinners stay stationary near the viewport bottom while autosaving", browserOptions, async () => {
   const { origin, fixture } = await syntheticBridge();
   const pm = objs => ({ __type: "ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass", value: { objs } });

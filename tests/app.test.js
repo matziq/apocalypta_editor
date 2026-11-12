@@ -87,7 +87,7 @@ function app({ stored = null, pickerResult, pickerError, native = true, confirm 
     fetch: async (url, init) => {
       fetches.push({ url, init });
       if (fetchResponse) return fetchResponse(url, init);
-      if (url === "/api/status") return { ok: true, json: async () => ({ protocolVersion: 3, folderExists: true, saveFolder: "C:\\Synthetic\\Apocalypter" }) };
+      if (url === "/api/status") return { ok: true, json: async () => ({ protocolVersion: 4, backupLimit: 3, folderExists: true, saveFolder: "C:\\Synthetic\\Apocalypter" }) };
       if (pickerError) throw pickerError;
       return { ok: !pickerResult?.error, status: pickerResult?.error ? 404 : 200, json: async () => pickerResult };
     }
@@ -163,7 +163,7 @@ function seedNativeEdit(ui) {
   vm.runInContext(`
     doc = ApocalypterSave.inspect('{"peacefulMode":{"__type":"bool","value":false}}');
     fileName = "SaveSettings.es3";
-    nativeSource = { handle: "opaque-handle", path: "C:\\\\Synthetic\\\\SaveSettings.es3", canSave: true };
+    nativeSource = { handle: "opaque-handle", path: "C:\\\\Synthetic\\\\SaveSettings.es3", canSave: true, backupLimit: 3 };
     render();
     inputs.get("peacefulMode").checked = true;
   `, ui.context);
@@ -174,7 +174,7 @@ const scalar = value => ({ __type: "float", value });
 const healthText = value => JSON.stringify({ Player: pm({ Health: scalar(value) }) });
 function nativeFixture(ui, text = healthText(100)) {
   vm.runInContext(`doc = ApocalypterSave.inspect(${JSON.stringify(text)}); originalBytes = new TextEncoder().encode(doc.text); fileName = "SaveGame1.es3";
-    nativeSource = { handle: "opaque", path: "C:\\\\Synthetic\\\\SaveGame1.es3", canSave: true, backupPath: "C:\\\\Synthetic\\\\load.original.bak", modifiedUtc: "2026-01-01T00:00:00Z" }; render();`, ui.context);
+    nativeSource = { handle: "opaque", path: "C:\\\\Synthetic\\\\SaveGame1.es3", canSave: true, backupLimit: 3, backupPath: "C:\\\\Synthetic\\\\load.original.bak", modifiedUtc: "2026-01-01T00:00:00Z" }; render();`, ui.context);
 }
 function draft(ui, id) { return vm.runInContext(`inputs.get(${JSON.stringify(id)})`, ui.context); }
 function deferred() {
@@ -183,7 +183,7 @@ function deferred() {
   return { promise, resolve };
 }
 function saveReply(text) {
-  return { ok: true, json: async () => ({ contentBase64: Buffer.from(text).toString("base64"), backupPath: "C:\\Synthetic\\load.original.bak" }) };
+  return { ok: true, json: async () => ({ contentBase64: Buffer.from(text).toString("base64"), backupLimit: 3, backupPath: "C:\\Synthetic\\load.original.bak" }) };
 }
 async function commitInput(ui, id, value) {
   const input = draft(ui, id);
@@ -195,7 +195,7 @@ async function commitInput(ui, id, value) {
 test("native startup autoload adopts backed-up source; standalone startup never requests a file", async () => {
   const text = healthText(50);
   const ui = app({ pickerResult: { name: "SaveGame2.es3", contentBase64: Buffer.from(text).toString("base64"), source: {
-    handle: "opened", path: "C:\\Synthetic\\SaveGame2.es3", canSave: true, backupPath: "C:\\Synthetic\\original.bak", modifiedUtc: "2026-01-01T00:00:00Z"
+    handle: "opened", path: "C:\\Synthetic\\SaveGame2.es3", canSave: true, backupLimit: 3, backupPath: "C:\\Synthetic\\original.bak", modifiedUtc: "2026-01-01T00:00:00Z"
   } } });
   ui.windowEvents.DOMContentLoaded();
   await new Promise(resolve => setImmediate(resolve));
@@ -216,6 +216,120 @@ test("latest-load failure or missing verified backup leaves editing unavailable 
     assert.match(ui.elements.get("message").textContent, /failed:/);
     assert.equal(ui.elements.get("native-picker").disabled, false);
   }
+});
+
+test("native discard refusal sends no open/backup/pruning requests and keeps drafts", async () => {
+  const ui = app({ confirm: () => false });
+  nativeFixture(ui, healthText(50));
+  const input = draft(ui, "Player.Health");
+  await commitInput(ui, "Player.Health", 70);
+  await ui.elements.get("native-picker").events.click();
+  assert.equal(ui.fetches.length, 0);
+  assert.equal(draft(ui, "Player.Health"), input);
+  assert.equal(input.value, "70");
+  assert.equal(vm.runInContext("changes.get('Player.Health')", ui.context), 70);
+});
+
+test("startup reads native zero policy before autoload and honestly enables backup-free saves", async () => {
+  const ui = app({ fetchResponse: async url => ({ ok: true, json: async () => url === "/api/status"
+    ? { protocolVersion: 4, backupLimit: 0, folderExists: true, saveFolder: "C:\\Synthetic" }
+    : { name: "SaveGame1.es3", contentBase64: Buffer.from(healthText(50)).toString("base64"),
+      source: { handle: "zero", path: "C:\\Synthetic\\SaveGame1.es3", canSave: true, backupLimit: 0, backupPath: null } } }) });
+  await vm.runInContext("openNative(true)", ui.context);
+  assert.deepEqual(ui.fetches.map(request => request.url), ["/api/status", "/api/latest"]);
+  assert.equal(ui.elements.get("backup-limit").value, "0");
+  assert.match(ui.elements.get("source-status").textContent, /Backups disabled: no recovery/);
+  assert.equal(ui.elements.get("autosave").disabled, false);
+  assert.doesNotMatch(ui.elements.get("picker-hint").textContent, /backup verified/);
+});
+
+test("unreadable native preference blocks autoload without substituting a default", async () => {
+  const ui = app({ fetchResponse: async () => ({ ok: false, status: 409, json: async () => ({ error: "Stored backup setting is invalid; no default was substituted." }) }) });
+  await vm.runInContext("openNative(true)", ui.context);
+  assert.deepEqual(ui.fetches.map(request => request.url), ["/api/status"]);
+  assert.equal(vm.runInContext("nativeBackupLimit", ui.context), null);
+  assert.match(ui.elements.get("backup-status").textContent, /invalid; no default/);
+  assert.equal(vm.runInContext("doc", ui.context), null);
+});
+
+test("retention changes preserve live drafts, and zero mode still permits opt-in autosave", async () => {
+  const warnings = [];
+  const ui = app({ timers: true, confirm: text => { warnings.push(text); return true; }, fetchResponse: async (url, init) => {
+    if (url === "/api/retention") return { ok: true, json: async () => ({ backupLimit: JSON.parse(init.body).backupLimit, backupPath: null }) };
+    return { ok: true, json: async () => ({ contentBase64: Buffer.from(healthText(75)).toString("base64"), backupLimit: 0, backupPath: null }) };
+  } });
+  nativeFixture(ui);
+  ui.elements.get("autosave").checked = true; ui.elements.get("autosave").events.change();
+  const input = draft(ui, "Player.Health");
+  input.value = "75"; await input.events.input();
+  ui.elements.get("backup-limit").value = "0";
+  await ui.elements.get("apply-backup-limit").events.click();
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 1, "Applying a policy must not commit an uncommitted draft");
+  assert.match(warnings[0], /ALL eligible editor backups.*\n[\s\S]*no automatic recovery copy/i);
+  assert.deepEqual(JSON.parse(ui.fetches[0].init.body), { backupLimit: 0, handle: "opaque" });
+  assert.equal(draft(ui, "Player.Health"), input);
+  assert.equal(input.value, "75");
+  assert.equal(ui.elements.get("autosave").disabled, false);
+  assert.match(ui.elements.get("save-hint").textContent, /WITHOUT a recovery/);
+  await input.events.change();
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 2);
+  assert.equal(vm.runInContext("doc.fields[0].value", ui.context), 75);
+  assert.match(ui.elements.get("source-status").textContent, /Backups disabled: no recovery/);
+});
+
+test("delayed retention cannot autosave newer uncommitted or invalid drafts", async () => {
+  const reply = deferred();
+  const ui = app({ timers: true, fetchResponse: async () => reply.promise });
+  nativeFixture(ui);
+  ui.elements.get("autosave").checked = true; ui.elements.get("autosave").events.change();
+  await commitInput(ui, "Player.Health", 90);
+  ui.elements.get("backup-limit").value = "2";
+  const applying = ui.elements.get("apply-backup-limit").events.click();
+  const input = draft(ui, "Player.Health");
+  input.value = "bad"; await input.events.input();
+  reply.resolve({ ok: true, json: async () => ({ backupLimit: 2, backupPath: "C:\\Synthetic\\new.bak" }) });
+  await applying;
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 1);
+  assert.equal(input.value, "bad");
+  assert.equal(input.getAttribute("aria-invalid"), "true");
+  assert.equal(draft(ui, "Player.Health"), input);
+});
+
+test("malformed limits and canceled zero consent never send retention requests", async () => {
+  const ui = app({ confirm: () => false });
+  nativeFixture(ui);
+  for (const bad of ["", "-1", "2.5", "9007199254740992", "no"]) {
+    ui.elements.get("backup-limit").value = bad;
+    await ui.elements.get("apply-backup-limit").events.click();
+    assert.match(ui.elements.get("backup-status").textContent, /whole number/);
+  }
+  ui.elements.get("backup-limit").value = "0";
+  await ui.elements.get("apply-backup-limit").events.click();
+  assert.equal(ui.fetches.length, 0);
+  assert.equal(vm.runInContext("nativeSource.backupLimit", ui.context), 3);
+});
+
+test("a committed save with cleanup errors adopts its baseline and pauses autosave without claiming failure", async () => {
+  const ui = app({ timers: true, fetchResponse: async () => ({ ok: true, json: async () => ({
+    saved: true, contentBase64: Buffer.from(healthText(90)).toString("base64"),
+    backupLimit: 1, backupPath: "C:\\Synthetic\\protected.bak", retentionWarning: "Access denied deleting an older backup"
+  }) }) });
+  nativeFixture(ui);
+  ui.elements.get("autosave").checked = true; ui.elements.get("autosave").events.change();
+  await commitInput(ui, "Player.Health", 90);
+  await ui.flushTimers();
+  assert.equal(vm.runInContext("doc.fields[0].value", ui.context), 90);
+  assert.equal(vm.runInContext("changes.size", ui.context), 0);
+  assert.match(ui.elements.get("backup-status").textContent, /Save succeeded.*cleanup is incomplete/);
+  assert.match(ui.elements.get("autosave-status").textContent, /Autosaved.*cleanup failed/);
+  assert.doesNotMatch(ui.elements.get("message").textContent, /Save failed/);
+  await commitInput(ui, "Player.Health", 80);
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 1);
+  assert.equal(draft(ui, "Player.Health").value, "80");
 });
 
 test("autosave serializes delayed writes, coalesces committed edits, and retains newer drafts", async () => {
@@ -452,12 +566,13 @@ test("each confirmed save sends an opaque handle and adopts the new baseline", a
     fetchResponse: async (url, init) => {
       assert.equal(url, "/api/save");
       const request = JSON.parse(init.body);
-      assert.deepEqual(Object.keys(request).sort(), ["changes", "confirmed", "handle"]);
+      assert.deepEqual(Object.keys(request).sort(), ["backupLimit", "changes", "confirmed", "handle"]);
+      assert.equal(request.backupLimit, 3);
       assert.equal(request.handle, "opaque-handle");
       return {
         ok: true,
         json: async () => ({
-          backupPath: `C:\\Synthetic\\backup-${confirmations}.bak`,
+          backupLimit: 3, backupPath: `C:\\Synthetic\\backup-${confirmations}.bak`,
           contentBase64: Buffer.from(`{"peacefulMode":{"__type":"bool","value":${request.changes.peacefulMode}}}`).toString("base64")
         })
       };
