@@ -61,6 +61,28 @@
     "5305950010086703831": "Front left wheel",
     "1324165727380696362": "Rear right wheel"
   };
+  // Exact prefab identities whose save/load FSMs use these item counters.
+  const bulkItemPrefabs = {
+    "688495819279421776": { name: "bandage_1", key: "Quantity", target: 100 },
+    "9121322384858893382": { name: "Repairbox_Small", key: "Quantity", target: 999 },
+    "7600464120049698740": { name: "Repairbox_Medium", key: "Quantity", target: 999 },
+    "4165647324065915868": { name: "Repairbox_Large", key: "Quantity", target: 999 },
+    "5513939087385948062": { name: "ammo_box_20gauge", key: "ammo", target: 100 },
+    "3910063457913955151": { name: "ammo_box_22", key: "ammo", target: 100 },
+    "5744510244793180658": { name: "ammo_box_big_22", key: "ammo", target: 100 },
+    "2411824388914619091": { name: "ammo_box_big_12gauge", key: "ammo", target: 100 },
+    "3133067563820807118": { name: "ammo_box_big_762mm", key: "ammo", target: 100 },
+    "3377769854383720206": { name: "ammo_box_762mm", key: "ammo", target: 100 },
+    "8401587218543670294": { name: "ammo_box_556mm", key: "ammo", target: 100 },
+    "8519476287603981168": { name: "ammo_box_12gauge", key: "ammo", target: 100 },
+    "2704672928494571242": { name: "ammo_box_3006", key: "ammo", target: 100 },
+    "7095138909402377063": { name: "ammo_box_big_3006", key: "ammo", target: 100 },
+    "2992344171066298429": { name: "ammo_box_big_9mm", key: "ammo", target: 100 },
+    "6949040989765713240": { name: "ammo_box_big_20gauge", key: "ammo", target: 100 },
+    "1625578815151821771": { name: "ammo_box_big_arrow", key: "ammo", target: 100 },
+    "3733066396143753576": { name: "ammo_box_9mm", key: "ammo", target: 100 },
+    "6082136355384846395": { name: "ammo_box_big_556mm", key: "ammo", target: 100 }
+  };
   const switchHelp = {
     peacefulMode: "True enables the game's peaceful-mode setting. The exact affected enemy behaviors have not been independently verified.",
     disableThirstHunger: "True disables the game's thirst/hunger system; false enables it.",
@@ -266,7 +288,7 @@
       const supportedMoney = at(money, "__type")?.value === "int" && moneyValue?.kind === "number" &&
         !(money?.implicit && at(money, "value"));
       if (supportedMoney) add("global.Money", "Nuts", "Currency", money, "int", 0, 1000000, "player",
-        "Saved global Money. The 1,000,000 editor limit is conservative, not a verified game maximum; Maximize all does not change it.");
+        "Saved global Money. The 1,000,000 editor limit is conservative, not a verified game maximum; Maximize all sets it to 1,000,000.");
       for (const [name, reason] of [
         ...(!supportedMoney ? [["Money", "This Money record is not a uniquely represented integer; preserved unchanged."]] : []),
         ["Sanity", "The active gameplay FSM clamps 0 to 100, but inspected saves also contain negative values; behavior with insanity disabled has not been verified."],
@@ -413,6 +435,9 @@
       const associated = referenceIsUnique ? wrapperOwner(item.name) : null;
       const matched = associated && associated.ref === item.ref;
       const prefabId = at(item.object, "es3Prefab", "prefabId")?.value;
+      const bulkPrefab = Object.hasOwn(bulkItemPrefabs, prefabId) ? bulkItemPrefabs[prefabId] : null;
+      const verifiedBulkPrefab = matched && bulkPrefab && readableName(item.name) === bulkPrefab.name &&
+        at(associated.owner, "es3Prefab", "prefabId")?.value === prefabId ? bulkPrefab : null;
       const wheel = Object.hasOwn(wheelPrefabs, prefabId) ? wheelPrefabs[prefabId] : null;
       const wheelRecord = at(tree, item.name);
       const wheelMatches = referenceIsUnique && nameCounts.get(item.name) === 1 && wheel &&
@@ -450,6 +475,7 @@
             const id = `${itemRecord.id}:Quantity`;
             const field = add(id, `${item.name} quantity`, "Existing item quantities", quantity.node, "int", 1, 2147483647, "items", "Changes this existing stack only, regardless of its world/container location; minimum 1 prevents deleting the object.");
             if (field) {
+              if (verifiedBulkPrefab?.key === "Quantity") field.bulkTarget = verifiedBulkPrefab.target;
               itemRecord.quantity = field.value;
               itemRecord.fieldIds.push(field.id);
             }
@@ -522,6 +548,7 @@
         const ammoCount = numericValue(at(associated.data, "ammo"), "int", item.name);
         if (ammoCount.value !== undefined && Number.isInteger(ammoCount.value) && ammoCount.value >= 0 && ammoCount.value <= 2147483647) {
           const field = add(`${itemRecord.id}:ammo`, `${item.name} ammo count`, "Existing item ammunition", ammoCount.node, "int", 0, 2147483647, "items", "The ammo count stored on this exact item, not the player supply or a weapon-type counter.");
+          if (verifiedBulkPrefab?.key === "ammo") field.bulkTarget = verifiedBulkPrefab.target;
           itemRecord.ammo = field.value;
           itemRecord.fieldIds.push(field.id);
         } else if (at(associated.data, "ammo")) itemRecord.warnings.push(ammoCount.error || "Item ammo must be a nonnegative signed 32-bit integer; shown read-only.");
@@ -536,10 +563,15 @@
           : numericValue(capacityNode, "float", item.name);
         if (liquid.value !== undefined && capacity.value !== undefined && capacity.value > 0 && liquid.value >= 0 && liquid.value <= capacity.value) {
           const capacitySource = !capacityNode && verifiedPrefab ? `Verified ${verifiedPrefab.name} prefab ${prefabId}; LiquidAmount FSM capacity ${capacity.value}.` : null;
-          const field = add(`${itemRecord.id}:Liquid`, `${item.name} liquid amount`, "Existing item liquids", liquid.node, "float", 0, capacity.value, "items", capacitySource || "This item's saved Liquid amount, bounded by its own saved LiquidCapacity. Units are not specified by the save.");
+          const mountedRadiator = linkedCars.length === 1 && linkedCars[0].mountKey === "hinge_radiator" &&
+            parentCounts.get(item.parentRef) === 1 && verifiedPrefab?.name === "radiator_medium_race";
+          const field = add(`${itemRecord.id}:Liquid`, `${item.name} liquid amount`,
+            mountedRadiator ? `${linkedCars[0].vehicle.name} components` : "Existing item liquids",
+            liquid.node, "float", 0, capacity.value, mountedRadiator ? "vehicles" : "items", capacitySource || "This item's saved Liquid amount, bounded by its own saved LiquidCapacity. Units are not specified by the save.");
           itemRecord.liquid = { value: field.value, capacity: capacity.value };
           if (capacitySource) itemRecord.liquid.capacitySource = capacitySource;
           itemRecord.fieldIds.push(field.id);
+          if (mountedRadiator) linkedCars[0].vehicle.fieldIds.push(field.id);
         }
 
         const editableKeys = new Set(itemRecord.fieldIds.map(id => id.slice(id.lastIndexOf(":") + 1)));
@@ -578,7 +610,10 @@
           "items",
           "This existing weaponsAmmoInGun counter is keyed by weapon type, not linked to an individual weapon instance."
         );
-        if (field) weaponFields.set(name, field);
+        if (field) {
+          if (Object.hasOwn(weaponAmmoLabels, name)) field.bulkTarget = 100;
+          weaponFields.set(name, field);
+        }
       }
     }
 

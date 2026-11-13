@@ -460,12 +460,12 @@ test("player bulk action is one coherent autosave, sets exact values, and preser
   ui.elements.get("maximize-player").events.click();
   await ui.flushTimers();
   assert.equal(ui.fetches.length, 1);
-  assert.deepEqual(payload.changes, { "Player.Health": 100, "Ammo.armor": 100, "Ammo.ammo_9mm": 100, "global.Hunger": 0, "global.Thirst": 0, "global.Fatigue": 0, "global.Radiation": 0 });
-  assert.equal(vm.runInContext("doc.fields.find(field => field.id === 'global.Money').value", ui.context), 39);
+  assert.deepEqual(payload.changes, { "Player.Health": 100, "Ammo.armor": 100, "Ammo.ammo_9mm": 100, "global.Hunger": 0, "global.Thirst": 0, "global.Fatigue": 0, "global.Radiation": 0, "global.Money": 1000000 });
+  assert.equal(vm.runInContext("doc.fields.find(field => field.id === 'global.Money').value", ui.context), 1000000);
   assert.equal(vm.runInContext("changes.size", ui.context), 0);
 });
 
-test("Nuts can be edited and saved without bulk actions overwriting its draft", async () => {
+test("Nuts can be edited and saved with the requested bulk target", async () => {
   const text = JSON.stringify({ global: pm({ Money: { __type: "int", value: 42 } }), Player: pm({ Health: scalar(50) }) });
   let payload;
   const ui = app({ fetchResponse: async (url, init) => {
@@ -476,10 +476,10 @@ test("Nuts can be edited and saved without bulk actions overwriting its draft", 
   assert.equal(draft(ui, "global.Money").value, "42");
   await commitInput(ui, "global.Money", 500);
   ui.elements.get("maximize-player").events.click();
-  assert.equal(draft(ui, "global.Money").value, "500");
+  assert.equal(draft(ui, "global.Money").value, "1000000");
   await ui.elements.get("save").events.click();
-  assert.equal(payload.changes["global.Money"], 500);
-  assert.equal(vm.runInContext("doc.fields.find(field => field.id === 'global.Money').value", ui.context), 500);
+  assert.equal(payload.changes["global.Money"], 1000000);
+  assert.equal(vm.runInContext("doc.fields.find(field => field.id === 'global.Money').value", ui.context), 1000000);
 });
 
 test("all-vehicle bulk action is one coherent autosave with exactly the selected-action targets", async () => {
@@ -502,6 +502,33 @@ test("all-vehicle bulk action is one coherent autosave with exactly the selected
   assert.match(vm.runInContext("itemRows.get(doc.items[0].id).summary.textContent", ui.context), /100%/);
   assert.match(vm.runInContext("vehicleSummaryRows.get(doc.vehicles[0].id).fuel.textContent", ui.context), /20 \/ 20/);
   assert.match(vm.runInContext("vehicleSummaryRows.get(doc.vehicles[0].id).parts.textContent", ui.context), /100%/);
+});
+
+test("vehicle batch fills attached radiator but not loose coolant, in one autosave", async () => {
+  let payload, text;
+  const ui = app({ timers: true, fetchResponse: async (url, init) => {
+    payload = JSON.parse(init.body);
+    return saveReply(Save.serialize(text, payload.changes));
+  } });
+  seedWorldItems(ui, true);
+  const root = JSON.parse(ui.context.worldText);
+  root["car(Clone)1"].value.objs.hinge_radiator = { transformID: "rad-mount" };
+  for (const [index, parent] of [[0, "rad-mount"], [1, null]]) {
+    const name = `radiator_medium_race(Clone)${index + 10}`, ref = `rad-${index}`;
+    const prefab = { prefabId: "2169926468007209799" };
+    root.newGOArray_Items.value.array.push({ name, _ES3Ref: ref, es3Prefab: prefab,
+      components: [{ __type: "Transform", parent: parent ? { _ES3Ref: parent } : null }] });
+    root[name] = pm({ owner: { _ES3Ref: ref, es3Prefab: prefab }, Liquid: scalar(0.3) });
+  }
+  text = JSON.stringify(root);
+  nativeFixture(ui, text);
+  ui.elements.get("autosave").checked = true; ui.elements.get("autosave").events.change();
+  ui.elements.get("all-vehicles").events.click();
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 1);
+  assert.equal(payload.changes["item:rad-0:3:Liquid"], 14);
+  assert.equal(payload.changes["item:rad-1:4:Liquid"], undefined);
+  assert.equal(vm.runInContext("doc.items[4].liquid.value", ui.context), 0.3);
 });
 
 test("editable-only reports zero matches rather than no instances for an all-read-only list", () => {
@@ -736,10 +763,46 @@ test("Saved items Maximize all includes hidden and mounted targets in a single a
   ui.elements.get("maximize-items").events.click();
   await ui.flushTimers();
   assert.equal(ui.fetches.length, 1);
-  assert.deepEqual(payload.changes, { "item:9000:0:Condition": 100, "item:9001:1:Condition": 100, "item:9001:1:Liquid": 5 });
-  assert.match(ui.elements.get("item-action-status").textContent, /staged 3.*3 counters skipped.*0 invalid/);
+  assert.deepEqual(payload.changes, { "item:9000:0:Condition": 100, "item:9001:1:Condition": 100, "item:9001:1:Liquid": 5, "weaponsAmmoInGun.ammoakms": 100 });
+  assert.match(ui.elements.get("item-action-status").textContent, /staged 4.*2 unverified counters and 0 invalid/);
   assert.equal(vm.runInContext("changes.size", ui.context), 0);
   assert.equal(ui.elements.get("item-filter").value, "wheel");
+});
+
+test("item batch stages verified requested counts, preserves invalid drafts and saves once", async () => {
+  let text, payload;
+  const ui = app({ timers: true, fetchResponse: async (url, init) => {
+    payload = JSON.parse(init.body);
+    return saveReply(Save.serialize(text, payload.changes));
+  } });
+  seedWorldItems(ui);
+  const root = JSON.parse(ui.context.worldText);
+  for (const [i, name, prefabId, key, value] of [
+    [0, "bandage_1", "688495819279421776", "Quantity", 150],
+    [1, "Repairbox_Medium", "7600464120049698740", "Quantity", 10],
+    [2, "ammo_box_9mm", "3733066396143753576", "ammo", 10]
+  ]) {
+    const savedName = `${name}(Clone)10`, ref = `new-${i}`, prefab = { prefabId };
+    root.newGOArray_Items.value.array.push({ name: savedName, _ES3Ref: ref, es3Prefab: prefab });
+    root[savedName] = pm({ owner: { _ES3Ref: ref, es3Prefab: prefab }, [key]: { __type: "int", value } });
+  }
+  text = JSON.stringify(root);
+  nativeFixture(ui, text);
+  ui.elements.get("autosave").checked = true; ui.elements.get("autosave").events.change();
+  await commitInput(ui, "item:new-2:5:ammo", "");
+  ui.elements.get("maximize-items").events.click();
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 0, "invalid draft blocks autosave of all staged changes");
+  assert.equal(draft(ui, "item:new-0:3:Quantity").value, "100");
+  assert.equal(draft(ui, "item:new-1:4:Quantity").value, "999");
+  assert.equal(draft(ui, "item:new-2:5:ammo").value, "");
+  assert.match(ui.elements.get("item-action-status").textContent, /1 invalid target drafts skipped/);
+  await commitInput(ui, "item:new-2:5:ammo", 100);
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 1);
+  assert.equal(payload.changes["item:new-0:3:Quantity"], 100);
+  assert.equal(payload.changes["item:new-1:4:Quantity"], 999);
+  assert.equal(payload.changes["item:new-2:5:ammo"], 100);
 });
 test("manual Save and Reset reopen the selected inline editor without clearing the filter", async () => {
   let text;

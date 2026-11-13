@@ -467,6 +467,60 @@ test("item maximization includes name-keyed wheels and verified liquids without 
   assert.equal(edited.items[1].liquid.value, 150);
 });
 
+test("bulk counts require exact item prefab and owner identity for bandages, repair kits and ammo", () => {
+  const Actions = require("../vehicle-actions.js");
+  for (const [name, prefabId, key, target] of [
+    ["bandage_1", "688495819279421776", "Quantity", 100],
+    ["Repairbox_Small", "9121322384858893382", "Quantity", 999],
+    ["Repairbox_Medium", "7600464120049698740", "Quantity", 999],
+    ["Repairbox_Large", "4165647324065915868", "Quantity", 999],
+    ["ammo_box_762mm", "3377769854383720206", "ammo", 100],
+    ["ammo_box_big_arrow", "1625578815151821771", "ammo", 100]
+  ]) {
+    const root = prefabLiquidSave(name, prefabId);
+    const record = root[`${name}(Clone)1`].value.objs;
+    delete record.Liquid;
+    record[key] = { __type: "int", value: 5 };
+    const text = JSON.stringify(root), doc = inspect(text), changes = {};
+    const result = Actions.maximizeItems(doc.items, doc.fields, f => ({ value: f.value, invalid: false }),
+      (f, value) => { changes[f.id] = value; }, require("../save-format.js").validate);
+    assert.equal(result.staged, 1, name);
+    assert.equal(Object.values(changes)[0], target);
+    assert.equal(inspect(serialize(text, changes)).fields.find(f => f.bulkTarget === target).value, target);
+    record.owner.es3Prefab.prefabId = "wrong";
+    assert.equal(inspect(JSON.stringify(root)).fields.some(f => f.bulkTarget !== undefined), false);
+    record.owner.es3Prefab.prefabId = prefabId;
+    root.newGOArray_Items.value.array[0].name = "unrelated(Clone)1";
+    assert.equal(inspect(JSON.stringify(root)).fields.some(f => f.bulkTarget !== undefined), false);
+  }
+});
+
+test("vehicle top-off includes only uniquely mounted verified radiator liquid", () => {
+  const Actions = require("../vehicle-actions.js");
+  const root = prefabLiquidSave("radiator_medium_race", "2169926468007209799");
+  const item = root.newGOArray_Items.value.array[0];
+  item.components[0].parent = { _ES3Ref: "rad-mount" };
+  const car = gameObject("car(Clone)2", 900, 9000);
+  root.newGOArray_Cars = pm(null, [car]);
+  root[car.name] = itemRecord(car.name, 900, {
+    hinge_radiator: { transformID: "rad-mount" },
+    Liquid: { __type: "float", value: 2 },
+    LiquidCapacity: { __type: "float", value: 20 }
+  });
+  let doc = inspect(JSON.stringify(root)), updates = {};
+  Actions.stage(doc.vehicles[0], doc.fields, "topoff", f => ({ value: f.value, invalid: false }),
+    (f, v) => { updates[f.id] = v; }, require("../save-format.js").validate);
+  assert.deepEqual(Object.values(updates), [20, 14]);
+  assert.equal(doc.fields.find(f => f.id.endsWith(":Liquid")).section, "vehicles");
+  root.newGOArray_Items.value.array.push(gameObject("other(Clone)3", 803, 8003, "rad-mount"));
+  doc = inspect(JSON.stringify(root));
+  assert.equal(doc.vehicles[0].fieldIds.some(id => id.endsWith(":Liquid")), false);
+  root.newGOArray_Items.value.array.pop();
+  item.components[0].parent._ES3Ref = "cargo";
+  doc = inspect(JSON.stringify(root));
+  assert.equal(doc.vehicles[0].fieldIds.some(id => id.endsWith(":Liquid")), false);
+});
+
 test("Vulture wheel hinges repair only uniquely matched wheels, not physics-lock cargo", () => {
   const Actions = require("../vehicle-actions.js");
   const root = wheelSave(), car = gameObject("Vulture(Clone)2", 900, 9000);

@@ -663,7 +663,7 @@ function vehicleActionFields(vehicle) {
 function updateVehicleActions() {
   const fields = vehicleActionFields(selectedVehicle());
   $("repair-vehicle").disabled = saving || !fields.some(field => field.id.endsWith(":Condition"));
-  $("topoff-vehicle").disabled = saving || !fields.some(field => field.id.endsWith(":fuel"));
+  $("topoff-vehicle").disabled = saving || !fields.some(field => field.id.endsWith(":fuel") || field.id.endsWith(":Liquid"));
   $("all-vehicles").disabled = saving || !doc?.vehicles.some(vehicle => vehicle.fieldIds.length);
 }
 
@@ -686,7 +686,7 @@ function stageVehicleAction(action) {
     ? `${action === "repair" ? "Repair" : "Top-off"} staged ${result.staged} supported field${result.staged === 1 ? "" : "s"} for ${vehicle.name}.${result.skippedInvalid ? ` ${result.skippedInvalid} invalid target field${result.skippedInvalid === 1 ? " was" : "s were"} left unchanged.` : ""} Review the changes before saving or exporting.`
     : result.skippedInvalid
       ? `${result.skippedInvalid} invalid target field${result.skippedInvalid === 1 ? " was" : "s were"} left unchanged. Correct it before staging this action.`
-      : `No eligible ${action === "repair" ? "component condition" : "fuel"} values needed updating for ${vehicle?.name || "the selected vehicle"}.`;
+      : `No eligible ${action === "repair" ? "component condition" : "fuel or mounted liquid"} values needed updating for ${vehicle?.name || "the selected vehicle"}.`;
   updateVehicleActions();
   requestAutosave();
 }
@@ -872,7 +872,7 @@ $("maximize-player").addEventListener("click", () => {
   refresh();
   const result = ApocalypterVehicleActions.maximize(doc.fields, readDraft, writeDraft, ApocalypterSave.validate);
   refresh();
-  $("player-action-status").textContent = `Maximize all staged ${result.staged} values: editable health, armor and supplies to 100; Hunger, Thirst, Fatigue and Radiation to 0. Nuts and read-only values were untouched.${result.skipped.length ? ` Could not set: ${result.skipped.join(", ")} (invalid draft or unsupported target).` : ""}`;
+  $("player-action-status").textContent = `Maximize all staged ${result.staged} values: health, armor and supplies to 100; Nuts to 1,000,000; Hunger, Thirst, Fatigue and Radiation to 0. Read-only values were untouched.${result.skipped.length ? ` Could not set: ${result.skipped.join(", ")} (invalid draft or unsupported target).` : ""}`;
   requestAutosave();
 });
 $("maximize-items").addEventListener("click", () => {
@@ -880,7 +880,7 @@ $("maximize-items").addEventListener("click", () => {
   refresh();
   const result = ApocalypterVehicleActions.maximizeItems(doc.items, doc.fields, readDraft, writeDraft, ApocalypterSave.validate);
   refresh();
-  $("item-action-status").textContent = `Maximize all staged ${result.staged} verified condition/liquid values across all saved items, regardless of filters. ${result.skippedUnverified} counters skipped (no verified game maximum); ${result.skippedInvalid} invalid target drafts skipped. ${result.readOnly} read-only values were untouched. No values were lowered.`;
+  $("item-action-status").textContent = `Maximize all staged ${result.staged} values across all saved items, regardless of filters: conditions/liquids to verified limits, ammo and bandages to 100, repair kits to 999. Counters above those requested values are lowered. ${result.skippedUnverified} unverified counters and ${result.skippedInvalid} invalid target drafts skipped; ${result.readOnly} read-only values untouched.`;
   requestAutosave();
 });
 $("all-vehicles").addEventListener("click", () => {
@@ -888,7 +888,7 @@ $("all-vehicles").addEventListener("click", () => {
   refresh();
   const result = ApocalypterVehicleActions.all(doc.vehicles, doc.fields, readDraft, writeDraft, ApocalypterSave.validate);
   refresh();
-  $("vehicle-action-status").textContent = `All vehicles: staged ${result.staged} verified repair/fuel values. ${result.missingRepair} vehicles had no verified repair target; ${result.missingFuel} had no verified tank. ${result.skippedInvalid} invalid target drafts were left unchanged. Unrelated and read-only values were untouched.`;
+  $("vehicle-action-status").textContent = `All vehicles: staged ${result.staged} verified repair and liquid values. ${result.missingRepair} vehicles had no verified repair target; ${result.missingFuel} had no verified fuel tank. ${result.skippedInvalid} invalid target drafts were left unchanged. Unrelated and read-only values were untouched.`;
   requestAutosave();
 });
 async function saveDocument(automatic = false) {
@@ -1006,11 +1006,11 @@ for (const [id, text] of [
   ["autosave", "Consent to overwrite the exact native-opened file after each committed valid change, without a separate prompt. Your native backup limit applies; 0 means no recovery copy. Invalid drafts or backup cleanup errors pause saving; errors stop automatic retries. Turning it off keeps pending drafts."],
   ["backup-limit", "Persistent native limit per original save, default 3. Apply removes excess backups made in this editor's exact timestamp/GUID format, preserving the verified recovery point. 0 disables automatic backups and removes eligible existing copies; damaged or overwritten saves then have no automatic recovery. Other files use the limit on their next open/save. Downloaded/unrelated files and links are never pruned."],
   ["editable-only", "Shows only item instances with at least one currently editable field. Combines with text search; hidden items and their drafts are not deleted."],
-  ["maximize-player", "Stages editable health, armor and supplies to exactly 100, and Hunger, Thirst, Fatigue and Radiation to 0. This can lower ammo values above 100. Nuts, read-only fields and invalid target drafts are skipped."],
-  ["maximize-items", "Stages every saved item's editable Condition to 100 and Liquid to its verified capacity, including matched mounted parts and hidden filtered items. Never lowers values. Quantity, item ammo and weapon-type counters have no verified game maximum and are skipped, as are invalid drafts and read-only values."],
-  ["all-vehicles", "Stages the same verified component repairs and tank top-offs as the selected-vehicle actions, across all vehicles. Unknown parts, storage associations and invalid target drafts are skipped."],
+  ["maximize-player", "Stages health, armor and supplies to 100, Nuts to 1,000,000, and Hunger, Thirst, Fatigue and Radiation to 0. Values above these requested targets can be lowered. Read-only fields and invalid target drafts are skipped."],
+  ["maximize-items", "Stages verified conditions and liquids to their maximum, verified ammo and bandages to 100, repair kits to 999, and weapon-type loaded ammo to 100. These requested counts are not verified game maxima and can lower higher values or exceed normal capacities. Unverified counters, invalid drafts and read-only values are skipped."],
+  ["all-vehicles", "Stages the same verified component repairs and tank and mounted radiator top-offs as the selected-vehicle actions, across all vehicles. Unknown parts, storage associations and invalid target drafts are skipped."],
   ["repair-vehicle", "Stages this selected vehicle's reference-matched component Condition values to 100%. It does not repair unlinked or stored spare parts."],
-  ["topoff-vehicle", "Stages this selected vehicle's Liquid amount to its verified saved tank capacity. Missing/invalid fuel mappings are skipped."]
+  ["topoff-vehicle", "Stages this selected vehicle's fuel and verified mounted radiator liquid to their capacities. Missing/invalid mappings and loose cargo are skipped."]
 ]) {
   const element = $(id);
   const container = document.createElement("span");

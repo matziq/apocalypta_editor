@@ -262,7 +262,7 @@ test("long item lists expand in place, keep inline drafts through autosave, and 
     await page.waitForFunction(() => !saving && doc.items.every(item => item.condition === 100 && item.liquid.value === 5));
     assert.equal(writes.length, 1);
     assert.equal(Object.keys(writes[0].changes).length, 160);
-    assert.match(await page.locator("#item-action-status").innerText(), /staged 160.*160 counters skipped/);
+    assert.match(await page.locator("#item-action-status").innerText(), /staged 160.*160 unverified counters/);
     assert.equal(await page.locator("#item-editor").isVisible(), true);
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }

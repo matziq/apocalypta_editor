@@ -3,12 +3,12 @@
 
   function stage(vehicle, fields, action, readValue, writeValue, validate) {
     const fieldById = new Map(fields.map(field => [field.id, field]));
-    const suffix = action === "repair" ? ":Condition" : action === "topoff" ? ":fuel" : null;
-    if (!suffix) throw new Error(`Unknown vehicle action: ${action}`);
+    const suffixes = action === "repair" ? [":Condition"] : action === "topoff" ? [":fuel", ":Liquid"] : null;
+    if (!suffixes) throw new Error(`Unknown vehicle action: ${action}`);
     let staged = 0;
     let skippedInvalid = 0;
-    for (const id of vehicle?.fieldIds || []) {
-      if (!id.endsWith(suffix)) continue;
+    for (const id of new Set(vehicle?.fieldIds || [])) {
+      if (!suffixes.some(suffix => id.endsWith(suffix))) continue;
       const field = fieldById.get(id);
       if (!field) continue;
       const current = readValue(field);
@@ -40,8 +40,8 @@
   function maximize(fields, readValue, writeValue, validate) {
     const result = { staged: 0, skipped: [] };
     for (const field of fields.filter(field => field.section === "player")) {
-      if (field.id === "global.Money") continue;
-      const target = /^global\.(Hunger|Thirst|Fatigue|Radiation)$/.test(field.id) ? 0 : 100;
+      const target = field.id === "global.Money" ? 1000000 :
+        /^global\.(Hunger|Thirst|Fatigue|Radiation)$/.test(field.id) ? 0 : 100;
       if (readValue(field).invalid) { result.skipped.push(field.label); continue; }
       try { validate(field, target); }
       catch { result.skipped.push(field.label); continue; }
@@ -57,15 +57,16 @@
     const ids = new Set(items.flatMap(item => item.fieldIds));
     const result = { staged: 0, skippedUnverified: 0, skippedInvalid: 0, readOnly: items.reduce((sum, item) => sum + item.readOnlyFields.length, 0) };
     for (const field of fields.filter(field => ids.has(field.id) || field.id.startsWith("weaponsAmmoInGun."))) {
-      if (!field.id.endsWith(":Condition") && !field.id.endsWith(":Liquid")) {
+      const target = field.id.endsWith(":Condition") || field.id.endsWith(":Liquid") ? field.max : field.bulkTarget;
+      if (target === undefined) {
         result.skippedUnverified++;
         continue;
       }
       const current = readValue(field);
       if (current.invalid) { result.skippedInvalid++; continue; }
-      if (Number(current.value) >= field.max) continue;
-      validate(field, field.max);
-      writeValue(field, field.max);
+      if (Number(current.value) === target) continue;
+      validate(field, target);
+      writeValue(field, target);
       result.staged++;
     }
     return result;
