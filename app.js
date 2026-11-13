@@ -872,7 +872,7 @@ $("maximize-player").addEventListener("click", () => {
   refresh();
   const result = ApocalypterVehicleActions.maximize(doc.fields, readDraft, writeDraft, ApocalypterSave.validate);
   refresh();
-  $("player-action-status").textContent = `Maximize all staged ${result.staged} values: editable health, armor and supplies to 100; Hunger, Thirst, Fatigue and Radiation to 0. Read-only values were untouched.${result.skipped.length ? ` Could not set: ${result.skipped.join(", ")} (invalid draft or unsupported target).` : ""}`;
+  $("player-action-status").textContent = `Maximize all staged ${result.staged} values: editable health, armor and supplies to 100; Hunger, Thirst, Fatigue and Radiation to 0. Nuts and read-only values were untouched.${result.skipped.length ? ` Could not set: ${result.skipped.join(", ")} (invalid draft or unsupported target).` : ""}`;
   requestAutosave();
 });
 $("maximize-items").addEventListener("click", () => {
@@ -1006,7 +1006,7 @@ for (const [id, text] of [
   ["autosave", "Consent to overwrite the exact native-opened file after each committed valid change, without a separate prompt. Your native backup limit applies; 0 means no recovery copy. Invalid drafts or backup cleanup errors pause saving; errors stop automatic retries. Turning it off keeps pending drafts."],
   ["backup-limit", "Persistent native limit per original save, default 3. Apply removes excess backups made in this editor's exact timestamp/GUID format, preserving the verified recovery point. 0 disables automatic backups and removes eligible existing copies; damaged or overwritten saves then have no automatic recovery. Other files use the limit on their next open/save. Downloaded/unrelated files and links are never pruned."],
   ["editable-only", "Shows only item instances with at least one currently editable field. Combines with text search; hidden items and their drafts are not deleted."],
-  ["maximize-player", "Stages editable Player & supplies values to exactly 100, except Hunger, Thirst, Fatigue and Radiation to 0. This can lower ammo values above 100. Read-only fields and invalid target drafts are skipped."],
+  ["maximize-player", "Stages editable health, armor and supplies to exactly 100, and Hunger, Thirst, Fatigue and Radiation to 0. This can lower ammo values above 100. Nuts, read-only fields and invalid target drafts are skipped."],
   ["maximize-items", "Stages every saved item's editable Condition to 100 and Liquid to its verified capacity, including matched mounted parts and hidden filtered items. Never lowers values. Quantity, item ammo and weapon-type counters have no verified game maximum and are skipped, as are invalid drafts and read-only values."],
   ["all-vehicles", "Stages the same verified component repairs and tank top-offs as the selected-vehicle actions, across all vehicles. Unknown parts, storage associations and invalid target drafts are skipped."],
   ["repair-vehicle", "Stages this selected vehicle's reference-matched component Condition values to 100%. It does not repair unlinked or stored spare parts."],

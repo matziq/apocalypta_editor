@@ -40,6 +40,7 @@
   function maximize(fields, readValue, writeValue, validate) {
     const result = { staged: 0, skipped: [] };
     for (const field of fields.filter(field => field.section === "player")) {
+      if (field.id === "global.Money") continue;
       const target = /^global\.(Hunger|Thirst|Fatigue|Radiation)$/.test(field.id) ? 0 : 100;
       if (readValue(field).invalid) { result.skipped.push(field.label); continue; }
       try { validate(field, target); }

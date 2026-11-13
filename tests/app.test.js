@@ -448,7 +448,7 @@ test("unchecking autosave cancels queued writes; failures latch without automati
 
 test("player bulk action is one coherent autosave, sets exact values, and preserves protected data", async () => {
   const text = JSON.stringify({ Player: pm({ Health: scalar(40) }), Ammo: pm({ armor: scalar(5), ammo_9mm: { __type: "int", value: 250 } }),
-    global: pm({ Hunger: scalar(10), Thirst: scalar(10), Fatigue: scalar(10), Radiation: scalar(10), Money: scalar(39), Sanity: scalar(-27) }) });
+    global: pm({ Hunger: scalar(10), Thirst: scalar(10), Fatigue: scalar(10), Radiation: scalar(10), Money: { __type: "int", value: 39 }, Sanity: scalar(-27) }) });
   let payload;
   const ui = app({ timers: true, fetchResponse: async (url, init) => {
     payload = JSON.parse(init.body);
@@ -461,8 +461,25 @@ test("player bulk action is one coherent autosave, sets exact values, and preser
   await ui.flushTimers();
   assert.equal(ui.fetches.length, 1);
   assert.deepEqual(payload.changes, { "Player.Health": 100, "Ammo.armor": 100, "Ammo.ammo_9mm": 100, "global.Hunger": 0, "global.Thirst": 0, "global.Fatigue": 0, "global.Radiation": 0 });
-  assert.equal(vm.runInContext("doc.readOnlyFields.find(field => field.id === 'global.Money').value", ui.context), 39);
+  assert.equal(vm.runInContext("doc.fields.find(field => field.id === 'global.Money').value", ui.context), 39);
   assert.equal(vm.runInContext("changes.size", ui.context), 0);
+});
+
+test("Nuts can be edited and saved without bulk actions overwriting its draft", async () => {
+  const text = JSON.stringify({ global: pm({ Money: { __type: "int", value: 42 } }), Player: pm({ Health: scalar(50) }) });
+  let payload;
+  const ui = app({ fetchResponse: async (url, init) => {
+    payload = JSON.parse(init.body);
+    return saveReply(Save.serialize(text, payload.changes));
+  } });
+  nativeFixture(ui, text);
+  assert.equal(draft(ui, "global.Money").value, "42");
+  await commitInput(ui, "global.Money", 500);
+  ui.elements.get("maximize-player").events.click();
+  assert.equal(draft(ui, "global.Money").value, "500");
+  await ui.elements.get("save").events.click();
+  assert.equal(payload.changes["global.Money"], 500);
+  assert.equal(vm.runInContext("doc.fields.find(field => field.id === 'global.Money').value", ui.context), 500);
 });
 
 test("all-vehicle bulk action is one coherent autosave with exactly the selected-action targets", async () => {

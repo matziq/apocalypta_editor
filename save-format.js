@@ -82,6 +82,7 @@
     let effect = switchHelp[field.id];
     if (!effect && field.id === "Player.Health") effect = "Player Health scalar. Higher values mean more health; 100 is the editor's healthy endpoint. The separate global.PlayerHealth copy is not changed.";
     if (!effect && field.id === "Ammo.armor") effect = "Saved armor amount. Higher means more armor; 100 is the editor's supported maximum. This does not grant the separate body-armor flag.";
+    if (!effect && field.id === "global.Money") effect = "Nuts currency shown in the HUD and used for purchases. The 1,000,000 maximum is an editor safety limit, not a verified game maximum; future in-game earnings can still increase the amount.";
     if (!effect && field.id.startsWith("Ammo.ammo_")) effect = field.id.endsWith("_capacity")
       ? "Saved player ammunition supply capacity for this type. Increasing it changes only this counter, not the current amount."
       : "Saved player ammunition supply count for this type. Higher means more supply, not per-weapon loaded rounds.";
@@ -260,8 +261,14 @@
       for (const name of ["Hunger", "Thirst", "Fatigue", "Radiation"]) {
         add(`global.${name}`, name, "Survival state", at(data, name), "float", 0, 100, "player", "Saved global state; the inspected gameplay FSM clamps this value from 0 to 100. Higher values are worse.");
       }
+      const money = at(data, "Money");
+      const moneyValue = money?.implicit || at(money, "value");
+      const supportedMoney = at(money, "__type")?.value === "int" && moneyValue?.kind === "number" &&
+        !(money?.implicit && at(money, "value"));
+      if (supportedMoney) add("global.Money", "Nuts", "Currency", money, "int", 0, 1000000, "player",
+        "Saved global Money. The 1,000,000 editor limit is conservative, not a verified game maximum; Maximize all does not change it.");
       for (const [name, reason] of [
-        ["Money", "The saved integer is understood, but safe purchase/debt bounds have not been verified."],
+        ...(!supportedMoney ? [["Money", "This Money record is not a uniquely represented integer; preserved unchanged."]] : []),
         ["Sanity", "The active gameplay FSM clamps 0 to 100, but inspected saves also contain negative values; behavior with insanity disabled has not been verified."],
         ["PlayerHealth", "A separate saved health copy; its load precedence relative to Player.Health has not been verified."],
         ...["automatic_gearbox", "autoclutch", "normalizeinput"].map(name => [name, "Game-slot copy only. Edit the verified per-key setting in SaveSettings.es3; duplicate scopes are not synchronized."])

@@ -314,15 +314,34 @@ test("verified survival globals use gameplay clamp bounds while uncertain state 
   }) });
   const doc = inspect(text);
   assert.equal(doc.kind, "Game save");
-  assert.deepEqual(doc.fields.map(field => field.id), ["global.Hunger", "global.Thirst", "global.Fatigue", "global.Radiation"]);
-  assert.deepEqual(doc.readOnlyFields.map(field => field.id), ["global.Money", "global.Sanity", "global.PlayerHealth"]);
+  assert.deepEqual(doc.fields.map(field => field.id), ["global.Hunger", "global.Thirst", "global.Fatigue", "global.Radiation", "global.Money"]);
+  assert.deepEqual(doc.readOnlyFields.map(field => field.id), ["global.Sanity", "global.PlayerHealth"]);
   const edits = Object.fromEntries(doc.fields.map(field => [field.id, field.id === "global.Radiation" ? 100 : 0]));
   const reopened = inspect(serialize(text, edits));
-  assert.deepEqual(reopened.readOnlyFields.map(field => field.value), [39, -27.3359985, 100]);
-  for (const field of doc.fields) {
+  assert.deepEqual(reopened.readOnlyFields.map(field => field.value), [-27.3359985, 100]);
+  for (const field of doc.fields.filter(field => field.id !== "global.Money")) {
     for (const value of [-0.01, 100.01]) assert.throws(() => serialize(text, { [field.id]: value }), /between 0 and 100/);
   }
   assert.throws(() => serialize(text, { "global.Sanity": 0 }), /not supported/);
+});
+
+test("Nuts edit only the saved global integer within the explicit editor limit", () => {
+  const text = JSON.stringify({ global: pm({ Money: { __type: "int", value: 42 }, Sanity: { __type: "float", value: -7 } }) });
+  const doc = inspect(text), money = doc.fields.find(field => field.id === "global.Money");
+  assert.equal(money.label, "Nuts");
+  assert.match(money.help, /editor safety limit, not a verified game maximum/);
+  assert.equal(serialize(text, {}), text);
+  assert.equal(serialize(text, { "global.Money": 999 }), text.slice(0, money.start) + "999" + text.slice(money.end));
+  for (const value of [-1, 1000001, 1.5, NaN]) assert.throws(() => serialize(text, { "global.Money": value }));
+  for (const value of [0, 1000000]) assert.equal(inspect(serialize(text, { "global.Money": value })).fields[0].value, value);
+  for (const value of [-1, 1000001, 1.5]) {
+    const invalid = text.replace('"value":42', `"value":${value}`);
+    assert.equal(inspect(invalid).fields.some(field => field.id === "global.Money"), false);
+    assert.equal(serialize(invalid, {}), invalid);
+  }
+  const wrongType = text.replace('"__type":"int","value":42', '"__type":"float","value":42');
+  assert.equal(inspect(wrongType).readOnlyFields.find(field => field.id === "global.Money").value, 42);
+  assert.throws(() => serialize(wrongType, { "global.Money": 100 }), /not supported/);
 });
 
 test("additional verified boolean settings edit only the requested scope", () => {
