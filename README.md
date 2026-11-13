@@ -73,7 +73,7 @@ The separate **Maximize all** button on **Saved items**, beside its filters, sta
 
 The theme button switches between light and dark; the initial appearance follows the operating system, and the selected theme is persisted locally. Choose Spring, Summer, Autumn, or Winter for a coordinated UI color palette. Each season has readable light and dark colors for page surfaces, text, controls, tables, warnings, and focus states. Seasonal appearance is UI-only, persists locally, and never alters or dirties a game save.
 
-In the **Vehicles** section, select a saved vehicle and use **Repair components** or **Top off fuel** to stage changes to its supported, reference-matched component `Condition` fields (to 100%) or its verified fuel and uniquely mounted medium race radiator liquids (to their verified capacities). **Repair and top off fuel for all vehicles** stages those same targets across every vehicle, reporting missing mappings and invalid targets skipped (including vehicles with no verified repair target). Other mounted liquids without a verified mapping and loose cargo are not included. The selected buttons are disabled if no eligible fields exist. Unrelated draft edits are preserved; an invalid target field is left unchanged. These actions use the existing before/after review and validation; they write only through an explicitly enabled autosave or a separate confirmed Save, or export. They do not modify vehicle-body state, unlinked components, or unknown fields.
+In the **Vehicles** section, select a saved vehicle and use **Repair components** or **Top off fuel** to stage changes to its supported, reference-matched component `Condition` fields (to 100%) or its verified fuel and uniquely mounted engine-oil and radiator liquids (to their verified capacities). **Repair and top off fuel for all vehicles** stages those same targets across every vehicle, reporting missing mappings and invalid targets skipped (including vehicles with no verified repair target). Other mounted liquids without a verified mapping and loose cargo are not included. The selected buttons are disabled if no eligible fields exist. Unrelated draft edits are preserved; an invalid target field is left unchanged. These actions use the existing before/after review and validation; they write only through an explicitly enabled autosave or a separate confirmed Save, or export. They do not modify vehicle-body state, unlinked components, or unknown fields.
 
 ## Supported fields and limits
 
@@ -88,7 +88,7 @@ Only fields already present with the expected type are exposed. No new fields, o
 | Settings | Master, ambient, engine, boss, ambient music and main-menu music volumes (0-1); FOV (30-120) |
 | Game slot | Existing item instances, names, exact references, active state, tags, saved parent references, and available local positions (inspection only) |
 | Game slot | Existing item stack `Quantity` values (1-2,147,483,647), per-item `ammo` counts (0-2,147,483,647), and verified item `Condition` scalars (0-100%), including loose world items and camp spares |
-| Game slot | Per-item `Liquid` bounded by that item's valid saved `LiquidCapacity`, or an exact verified container prefab identity when capacity is absent; units are left as saved units |
+| Game slot | Per-item `Liquid` bounded by that item's valid saved `LiquidCapacity`, or an exact verified prefab identity when capacity is absent; units are left as saved units |
 | Game slot | Existing `weaponsAmmoInGun` counters by weapon type (nonnegative signed 32-bit integers); these are **not** per-instance ammunition |
 | Game slot | Existing vehicle fuel `Liquid` values, bounded by that vehicle's saved `LiquidCapacity` and labeled in L based on the game's player-facing units |
 | Game slot | Engine, radiator, and other existing part `Condition` values independently of mounting; attribution to a vehicle still requires a unique saved parent/mount reference |
@@ -109,7 +109,7 @@ World or camp items do not need to be attached to a vehicle or proven to belong 
 
 When an item's saved parent appears uniquely in a matched vehicle's `es3Prefab.refs` map, its location says **Vehicle-associated** unless a specific mount is independently verified. General reference-map membership does not distinguish mounting from storage or prove player possession. Ambiguous maps stay unresolved. General associations never add component-repair or vehicle-top-off targets; those actions require explicit mount/tank evidence.
 
-**Inspect** opens items with no safely editable fields and explains the limitation. Available unsupported scalar values are shown read-only with reasons. In the inspected saves, loose engines and radiators save `Condition`, and ammo boxes save their own `ammo` count. The pictured Small wheel T1, Small wheel T2, and Armored Street Wheel save condition as a standalone float keyed by the exact instance name: these are editable only with a unique item name and reference and the verified matching prefab. Their scalar has no owner reference, and its name alone does not establish mounting. Use **Saved items → Edit values** or that page's **Maximize all**; Vulture wheels at uniquely resolved wheel-hinge parents are also included in vehicle repair. A wheel at the physics-lock parent is not treated as mounted. Other wheels, exhausts, tools, engine liquids, and growing-item liquids may remain read-only. Grip, radiator cooling, and supercharger power are prefab/gameplay properties, not verified per-instance saved scalars. Unknown timers, growth values, gearing, and purchase-state fields remain unchanged.
+**Inspect** opens items with no safely editable fields and explains the limitation. Available unsupported scalar values are shown read-only with reasons. In the inspected saves, loose engines and radiators save `Condition`, and ammo boxes save their own `ammo` count. The pictured Small wheel T1, Small wheel T2, and Armored Street Wheel save condition as a standalone float keyed by the exact instance name: these are editable only with a unique item name and reference and the verified matching prefab. Their scalar has no owner reference, and its name alone does not establish mounting. Use **Saved items → Edit values** or that page's **Maximize all**; Vulture wheels at uniquely resolved wheel-hinge parents are also included in vehicle repair. A wheel at the physics-lock parent is not treated as mounted. Other wheels, exhausts, tools, unverified liquids, and growing-item liquids may remain read-only. Grip, radiator cooling, and supercharger power are prefab/gameplay properties, not verified per-instance saved scalars. Unknown timers, growth values, gearing, and purchase-state fields remain unchanged.
 
 Missing-capacity mappings were verified against the installed game's actual prefab IDs and `LiquidAmount` FSM variables:
 
@@ -121,6 +121,28 @@ Missing-capacity mappings were verified against the installed game's actual pref
 | `Diesel_Barrel` | `608293236901033563` | 150 |
 | `MotorOil_Can_Big` | `5623108999256334996` | 30 |
 | `radiator_medium_race` | `2169926468007209799` | 14 |
+| `Diesel_Can` | `9030660213298172268` | 20 |
+| `radiator_medium` | `8205777586039224731` | 9 |
+| `radiator_motorcycle` | `2705209445545947911` | 3 |
+| `radiator_small` | `5669857674379848146` | 6 |
+| `radiator_truck` | `5421126813566889844` | 18 |
+| `radiator_truck_big` | `2031828300969920981` | 24 |
+| `radiator_truck_ultra` | `3587043590766116916` | 28 |
+| `594cc I2 23HP 39Nm Gasoline` | `3634296406011431456` | 2 |
+| `3L I5 87HP 172Nm Diesel` | `6089072345908897270` | 5.1 |
+| `3.8L V6 165HP 285Nm Gasoline` | `5945172545298182391` | 6 |
+| `3.7L I6 145HP 292Nm Gasoline` | `624016700395080820` | 5.3 |
+| `5.8L I6 120HP 356Nm Diesel` | `7861181815379186` | 7 |
+| `18L V8 335HP 1700Nm Diesel` | `4167795411855106502` | 16 |
+| `2.8L V6 115HP 183Nm Gasoline` | `7876660059110608148` | 5 |
+| `5.2L V8 230HP 340Nm Gasoline` | `9035087652290305727` | 7 |
+| `7L V8 355HP 569Nm Gasoline` | `5126044545507921876` | 9 |
+| `1.3L v2 55HP 94Nm Gasoline` | `884780215855984285` | 3.3 |
+| `1.2L I4 59HP 87Nm Gasoline` | `6758790462075466819` | 3.3 |
+| `2.3L I4 89HP 165Nm Gasoline` | `374403439354623823` | 3.9 |
+| `7L I6 165HP 542Nm Diesel` | `1298474360822390476` | 7.5 |
+| `8.2L V8 400HP 746Nm Gasoline` | `4674809622967151223` | 10 |
+| `11.5L V12 274HP 854Nm Gasoline` | `873555013045931076` | 13 |
 
 Fallback requires the exact base name and matching prefab IDs in **both** the saved object and its reference-matched scalar owner. The inspector displays the capacity source. A present capacity always takes precedence; an invalid present capacity is never replaced with a prefab guess. No `LiquidCapacity` field is inserted into the save. Other or conflicting prefab identities stay read-only. These mappings reflect the inspected game assets, not an assurance for future versions that reuse IDs with changed behavior.
 
@@ -135,6 +157,10 @@ Inspected against local `SaveGame1.es3`, `SaveGame2.es3`, and `SaveSettings.es3`
 Mapping evidence in the installed Unity 2020.3.49f1 `data.unity3d`: `sharedassets1.assets` oil/gasoline/water GameObjects 13681/8948/20904 have matching ES3Prefab IDs and `LiquidAmount` FSMs 105672/104007/108401; their live capacity variables are 5/20/13. `level1` survival FSMs 11831/11833/11842/11836 clamp Hunger/Thirst/Fatigue/Radiation from 0 to 100. Per-key settings Load/Save FSMs 13403/12636/11994/12123/13387 correspond to automatic gearbox/autoclutch/normalized input/bloom/sharpen. These assets were inspected in memory only; the editor needs no installation assets at runtime.
 
 Additional `sharedassets1.assets` evidence: Diesel Barrel and big oil can GameObjects 31081/32544 have `LiquidAmount` FSMs 112013/112440 with capacities 150/30; the medium race radiator GameObject 24474 has a cap-child `LiquidAmount` FSM 109626 with capacity 14. Wheel GameObjects 19728/24165/10145 use `saveItemVar` FSMs 103785/103388/104446 to save and load `Condition` by object name; their HUD FSMs 107940/109448/104440 identify the three wheel labels. Vulture GameObject 9130's ES3Prefab 108980 maps the verified wheel-hinge keys to four transforms, separately from its PhysicsLock transform. A current save value matching a screenshot is suggestive, not proof of the same instance.
+
+Additional liquid evidence: engine GameObjects 8943/12433 have cap-child `LiquidAmount` FSMs 107368/106676 that clamp engine oil at 2/6; radiator GameObjects 20476/20449 have cap FSMs 108196/108178 clamping water at 6/3. Their save/load FSMs persist the matching liquid value. Other engine/radiator IDs in the table were checked against their corresponding cap, clamp, and save/load FSMs. Diesel_Can GameObject 22228 has `LiquidAmount` FSM 108841 with capacity 20. Decimal capacities in the table round to Unity's stored single-precision floats; the editor also accepts their nine-digit serialized representations.
+
+`blastlance_1` objects in the inspected save have a zero `Quantity`, but prefab save/load FSM 110681 does not establish it as an ammunition counter, so it remains read-only. Weed-bag and cigarette quantities are editable individually, but no requested or verified bulk maximum was established; plant/dew-collector liquids without a verified capacity also remain unchanged.
 
 Currency evidence: `level1` HUD FSM 11830 converts global `Money` to its HUD text; global save/load FSM 13238 saves and loads the `global` record. `sharedassets1.assets` purchase FSM 103214 labels prices “Nuts” and compares `Money` with `BuyValue`; sell FSM 103560 adds `PriceInt` to `Money`. The editable ceiling is not derived from those actions. Real game reload of an edited currency value has not been verified.
 

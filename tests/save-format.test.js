@@ -521,6 +521,77 @@ test("vehicle top-off includes only uniquely mounted verified radiator liquid", 
   assert.equal(doc.vehicles[0].fieldIds.some(id => id.endsWith(":Liquid")), false);
 });
 
+test("verified engine and radiator liquid capacities are enforced without inventing fields", () => {
+  for (const [name, id, capacity] of [
+    ["Diesel_Can", "9030660213298172268", 20],
+    ["594cc I2 23HP 39Nm Gasoline", "3634296406011431456", 2],
+    ["3L I5 87HP 172Nm Diesel", "6089072345908897270", 5.1],
+    ["3.7L I6 145HP 292Nm Gasoline", "624016700395080820", 5.30000019],
+    ["3.8L V6 165HP 285Nm Gasoline", "5945172545298182391", 6],
+    ["radiator_small", "5669857674379848146", 6],
+    ["radiator_motorcycle", "2705209445545947911", 3],
+    ["radiator_truck_ultra", "3587043590766116916", 28]
+  ]) {
+    const root = prefabLiquidSave(name, id);
+    root[`${name}(Clone)1`].value.objs.Liquid.value = 1;
+    const text = JSON.stringify(root), doc = inspect(text), item = doc.items[0];
+    assert.equal(item.liquid.capacity, capacity);
+    assert.equal(inspect(serialize(text, { [item.fieldIds[0]]: capacity })).items[0].liquid.value, capacity);
+    assert.throws(() => serialize(text, { [item.fieldIds[0]]: capacity + 0.1 }), /between/);
+    assert.equal(serialize(text, {}), text);
+    root[`${name}(Clone)1`].value.objs.owner.es3Prefab.prefabId = "wrong";
+    assert.equal(inspect(JSON.stringify(root)).items[0].liquid, null);
+    root[`${name}(Clone)1`].value.objs.owner.es3Prefab.prefabId = id;
+    root[`${name}(Clone)1`].value.objs.LiquidCapacity = { __type: "float", value: -1 };
+    assert.equal(inspect(JSON.stringify(root)).items[0].liquid, null);
+  }
+});
+
+test("fractional prefab capacities accept Unity float spellings and reject the next float", () => {
+  const Actions = require("../vehicle-actions.js");
+  for (const [name, id, nominal, serialized, nextFloat] of [
+    ["3L I5 87HP 172Nm Diesel", "6089072345908897270", 5.1, 5.0999999, 5.100000381469727],
+    ["3.7L I6 145HP 292Nm Gasoline", "624016700395080820", 5.3, 5.30000019, 5.3000006675720215]
+  ]) {
+    const root = prefabLiquidSave(name, id);
+    root[`${name}(Clone)1`].value.objs.Liquid.value = serialized;
+    const text = JSON.stringify(root), doc = inspect(text), field = doc.fields.find(f => f.id.endsWith(":Liquid"));
+    assert.ok(field);
+    assert.equal(serialize(text, {}), text);
+    assert.doesNotThrow(() => require("../save-format.js").validate(field, nominal));
+    assert.doesNotThrow(() => require("../save-format.js").validate(field, serialized));
+    assert.throws(() => require("../save-format.js").validate(field, nextFloat), /between/);
+    const updates = {};
+    Actions.maximizeItems(doc.items, doc.fields, f => ({ value: f.value, invalid: false }),
+      (f, value) => { updates[f.id] = value; }, require("../save-format.js").validate);
+    if (serialized !== field.max) assert.equal(updates[field.id], field.max);
+  }
+});
+
+test("engine top-off requires a unique matching engine mount, not a radiator or cargo parent", () => {
+  const Actions = require("../vehicle-actions.js");
+  const root = prefabLiquidSave("3.8L V6 165HP 285Nm Gasoline", "5945172545298182391");
+  const item = root.newGOArray_Items.value.array[0], car = gameObject("car(Clone)2", 900, 9000);
+  root.newGOArray_Cars = pm(null, [car]);
+  root[car.name] = itemRecord(car.name, 900, {
+    hinge_engine: { transformID: "engine-mount" }, hinge_radiator: { transformID: "radiator-mount" }
+  });
+  item.components[0].parent = { _ES3Ref: "engine-mount" };
+  let doc = inspect(JSON.stringify(root)), updates = {};
+  Actions.stage(doc.vehicles[0], doc.fields, "topoff", f => ({ value: f.value, invalid: false }),
+    (f, value) => { updates[f.id] = value; }, require("../save-format.js").validate);
+  assert.deepEqual(Object.values(updates), [6]);
+  for (const parent of ["radiator-mount", "cargo"]) {
+    item.components[0].parent._ES3Ref = parent;
+    doc = inspect(JSON.stringify(root));
+    assert.equal(doc.vehicles[0].fieldIds.some(id => id.endsWith(":Liquid")), false);
+  }
+  item.components[0].parent._ES3Ref = "engine-mount";
+  root.newGOArray_Items.value.array.push(gameObject("other(Clone)3", 803, 8003, "engine-mount"));
+  doc = inspect(JSON.stringify(root));
+  assert.equal(doc.vehicles[0].fieldIds.some(id => id.endsWith(":Liquid")), false);
+});
+
 test("Vulture wheel hinges repair only uniquely matched wheels, not physics-lock cargo", () => {
   const Actions = require("../vehicle-actions.js");
   const root = wheelSave(), car = gameObject("Vulture(Clone)2", 900, 9000);

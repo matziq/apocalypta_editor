@@ -46,7 +46,29 @@
     "4230013134874058846": { name: "Water_Can_Plastic", capacity: 13 },
     "608293236901033563": { name: "Diesel_Barrel", capacity: 150 },
     "5623108999256334996": { name: "MotorOil_Can_Big", capacity: 30 },
-    "2169926468007209799": { name: "radiator_medium_race", capacity: 14 }
+    "9030660213298172268": { name: "Diesel_Can", capacity: 20 },
+    "2169926468007209799": { name: "radiator_medium_race", capacity: 14, mount: "hinge_radiator" },
+    "8205777586039224731": { name: "radiator_medium", capacity: 9, mount: "hinge_radiator" },
+    "2705209445545947911": { name: "radiator_motorcycle", capacity: 3, mount: "hinge_radiator" },
+    "5669857674379848146": { name: "radiator_small", capacity: 6, mount: "hinge_radiator" },
+    "5421126813566889844": { name: "radiator_truck", capacity: 18, mount: "hinge_radiator" },
+    "2031828300969920981": { name: "radiator_truck_big", capacity: 24, mount: "hinge_radiator" },
+    "3587043590766116916": { name: "radiator_truck_ultra", capacity: 28, mount: "hinge_radiator" },
+    "3634296406011431456": { name: "594cc I2 23HP 39Nm Gasoline", capacity: 2, mount: "hinge_engine" },
+    "6089072345908897270": { name: "3L I5 87HP 172Nm Diesel", capacity: 5.1, mount: "hinge_engine" },
+    "5945172545298182391": { name: "3.8L V6 165HP 285Nm Gasoline", capacity: 6, mount: "hinge_engine" },
+    "624016700395080820": { name: "3.7L I6 145HP 292Nm Gasoline", capacity: 5.3, mount: "hinge_engine" },
+    "7861181815379186": { name: "5.8L I6 120HP 356Nm Diesel", capacity: 7, mount: "hinge_engine" },
+    "4167795411855106502": { name: "18L V8 335HP 1700Nm Diesel", capacity: 16, mount: "hinge_engine" },
+    "7876660059110608148": { name: "2.8L V6 115HP 183Nm Gasoline", capacity: 5, mount: "hinge_engine" },
+    "9035087652290305727": { name: "5.2L V8 230HP 340Nm Gasoline", capacity: 7, mount: "hinge_engine" },
+    "5126044545507921876": { name: "7L V8 355HP 569Nm Gasoline", capacity: 9, mount: "hinge_engine" },
+    "884780215855984285": { name: "1.3L v2 55HP 94Nm Gasoline", capacity: 3.3, mount: "hinge_engine" },
+    "6758790462075466819": { name: "1.2L I4 59HP 87Nm Gasoline", capacity: 3.3, mount: "hinge_engine" },
+    "374403439354623823": { name: "2.3L I4 89HP 165Nm Gasoline", capacity: 3.9, mount: "hinge_engine" },
+    "1298474360822390476": { name: "7L I6 165HP 542Nm Diesel", capacity: 7.5, mount: "hinge_engine" },
+    "4674809622967151223": { name: "8.2L V8 400HP 746Nm Gasoline", capacity: 10, mount: "hinge_engine" },
+    "873555013045931076": { name: "11.5L V12 274HP 854Nm Gasoline", capacity: 13, mount: "hinge_engine" }
   };
   // These prefabs save Condition as a float under the object's exact name, without an owner wrapper.
   const wheelPrefabs = {
@@ -558,20 +580,21 @@
         const knownPrefab = Object.hasOwn(liquidPrefabs, prefabId) ? liquidPrefabs[prefabId] : null;
         const verifiedPrefab = knownPrefab && readableName(item.name) === knownPrefab.name &&
           at(associated.owner, "es3Prefab", "prefabId")?.value === prefabId ? knownPrefab : null;
+        // Unity may serialize a float32 capacity with up to nine significant digits.
         const capacity = !capacityNode && verifiedPrefab
-          ? { value: verifiedPrefab.capacity }
+          ? { value: Math.max(verifiedPrefab.capacity, Number(Math.fround(verifiedPrefab.capacity).toPrecision(9))) }
           : numericValue(capacityNode, "float", item.name);
         if (liquid.value !== undefined && capacity.value !== undefined && capacity.value > 0 && liquid.value >= 0 && liquid.value <= capacity.value) {
           const capacitySource = !capacityNode && verifiedPrefab ? `Verified ${verifiedPrefab.name} prefab ${prefabId}; LiquidAmount FSM capacity ${capacity.value}.` : null;
-          const mountedRadiator = linkedCars.length === 1 && linkedCars[0].mountKey === "hinge_radiator" &&
-            parentCounts.get(item.parentRef) === 1 && verifiedPrefab?.name === "radiator_medium_race";
+          const mountedLiquid = linkedCars.length === 1 && verifiedPrefab?.mount === linkedCars[0].mountKey &&
+            parentCounts.get(item.parentRef) === 1;
           const field = add(`${itemRecord.id}:Liquid`, `${item.name} liquid amount`,
-            mountedRadiator ? `${linkedCars[0].vehicle.name} components` : "Existing item liquids",
-            liquid.node, "float", 0, capacity.value, mountedRadiator ? "vehicles" : "items", capacitySource || "This item's saved Liquid amount, bounded by its own saved LiquidCapacity. Units are not specified by the save.");
+            mountedLiquid ? `${linkedCars[0].vehicle.name} components` : "Existing item liquids",
+            liquid.node, "float", 0, capacity.value, mountedLiquid ? "vehicles" : "items", capacitySource || "This item's saved Liquid amount, bounded by its own saved LiquidCapacity. Units are not specified by the save.");
           itemRecord.liquid = { value: field.value, capacity: capacity.value };
           if (capacitySource) itemRecord.liquid.capacitySource = capacitySource;
           itemRecord.fieldIds.push(field.id);
-          if (mountedRadiator) linkedCars[0].vehicle.fieldIds.push(field.id);
+          if (mountedLiquid) linkedCars[0].vehicle.fieldIds.push(field.id);
         }
 
         const editableKeys = new Set(itemRecord.fieldIds.map(id => id.slice(id.lastIndexOf(":") + 1)));

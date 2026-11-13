@@ -1008,9 +1008,9 @@ for (const [id, text] of [
   ["editable-only", "Shows only item instances with at least one currently editable field. Combines with text search; hidden items and their drafts are not deleted."],
   ["maximize-player", "Stages health, armor and supplies to 100, Nuts to 1,000,000, and Hunger, Thirst, Fatigue and Radiation to 0. Values above these requested targets can be lowered. Read-only fields and invalid target drafts are skipped."],
   ["maximize-items", "Stages verified conditions and liquids to their maximum, verified ammo and bandages to 100, repair kits to 999, and weapon-type loaded ammo to 100. These requested counts are not verified game maxima and can lower higher values or exceed normal capacities. Unverified counters, invalid drafts and read-only values are skipped."],
-  ["all-vehicles", "Stages the same verified component repairs and tank and mounted radiator top-offs as the selected-vehicle actions, across all vehicles. Unknown parts, storage associations and invalid target drafts are skipped."],
+  ["all-vehicles", "Stages verified component repairs and fuel, engine-oil and radiator top-offs across all vehicles. Unknown parts, storage associations and invalid target drafts are skipped."],
   ["repair-vehicle", "Stages this selected vehicle's reference-matched component Condition values to 100%. It does not repair unlinked or stored spare parts."],
-  ["topoff-vehicle", "Stages this selected vehicle's fuel and verified mounted radiator liquid to their capacities. Missing/invalid mappings and loose cargo are skipped."]
+  ["topoff-vehicle", "Stages this selected vehicle's fuel and verified mounted engine and radiator liquids to their capacities. Missing/invalid mappings and loose cargo are skipped."]
 ]) {
   const element = $(id);
   const container = document.createElement("span");

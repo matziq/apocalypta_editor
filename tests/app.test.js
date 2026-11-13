@@ -504,7 +504,7 @@ test("all-vehicle bulk action is one coherent autosave with exactly the selected
   assert.match(vm.runInContext("vehicleSummaryRows.get(doc.vehicles[0].id).parts.textContent", ui.context), /100%/);
 });
 
-test("vehicle batch fills attached radiator but not loose coolant, in one autosave", async () => {
+test("vehicle batch fills attached engine and radiator but not loose coolant, in one autosave", async () => {
   let payload, text;
   const ui = app({ timers: true, fetchResponse: async (url, init) => {
     payload = JSON.parse(init.body);
@@ -512,6 +512,14 @@ test("vehicle batch fills attached radiator but not loose coolant, in one autosa
   } });
   seedWorldItems(ui, true);
   const root = JSON.parse(ui.context.worldText);
+  const engineName = "3.8L V6 165HP 285Nm Gasoline(Clone)1";
+  const engine = root.newGOArray_Items.value.array[0];
+  const engineRecord = root["engine(Clone)1"];
+  delete root["engine(Clone)1"];
+  root[engineName] = engineRecord;
+  engine.name = engineName;
+  engine.es3Prefab = { prefabId: "5945172545298182391" };
+  engineRecord.value.objs.owner.es3Prefab = engine.es3Prefab;
   root["car(Clone)1"].value.objs.hinge_radiator = { transformID: "rad-mount" };
   for (const [index, parent] of [[0, "rad-mount"], [1, null]]) {
     const name = `radiator_medium_race(Clone)${index + 10}`, ref = `rad-${index}`;
@@ -526,6 +534,7 @@ test("vehicle batch fills attached radiator but not loose coolant, in one autosa
   ui.elements.get("all-vehicles").events.click();
   await ui.flushTimers();
   assert.equal(ui.fetches.length, 1);
+  assert.equal(payload.changes["item:9000:0:Liquid"], 6);
   assert.equal(payload.changes["item:rad-0:3:Liquid"], 14);
   assert.equal(payload.changes["item:rad-1:4:Liquid"], undefined);
   assert.equal(vm.runInContext("doc.items[4].liquid.value", ui.context), 0.3);
