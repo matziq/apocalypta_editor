@@ -258,6 +258,43 @@ test("bounds existing stack quantity, component percent and fuel by saved tank c
   assert.throws(() => serialize(text, { [fuel.id]: 21.01 }), /between 0 and 21/);
 });
 
+test("First Aid and Weed expose only their existing stack quantities", () => {
+  const aidName = "first_aid_1(Clone)359", weedName = "weed_bag(Clone)333";
+  const aid = gameObject(aidName, 901, 9001, "7489528302310536125");
+  aid.es3Prefab = { prefabId: "3955095449936337101" };
+  const weed = gameObject(weedName, 902, 9002, "1668109356054687553");
+  weed.es3Prefab = { prefabId: "2856772050428381491" };
+  const carName = "Vulture(Clone)76", car = gameObject(carName, 903, 9003);
+  car.es3Prefab = { prefabId: "8734799950597450027", refs: { "2086200191613234582": "7489528302310536125" } };
+  const root = {
+    Player: pm({ Health: { __type: "float", value: 100 } }),
+    Ammo: pm({ armor: { __type: "float", value: 0 } }),
+    newGOArray_Items: pm(null, [aid, weed]),
+    newGOArray_Cars: pm(null, [car]),
+    [aidName]: itemRecord(aidName, 901, { Quantity: { __type: "int", value: 3 } }),
+    [weedName]: itemRecord(weedName, 902, { Quantity: { __type: "int", value: 4 } }),
+    [carName]: itemRecord(carName, 903, {})
+  };
+  root[aidName].value.objs.owner.es3Prefab = { prefabId: "3955095449936337101" };
+  root[weedName].value.objs.owner.es3Prefab = { prefabId: "2856772050428381491" };
+  root[carName].value.objs.owner.es3Prefab = { prefabId: "8734799950597450027", refs: { "2086200191613234582": "7489528302310536125" } };
+  const text = JSON.stringify(root), doc = inspect(text);
+  const aidItem = doc.items.find(item => item.name === aidName);
+  const weedItem = doc.items.find(item => item.name === weedName);
+  assert.equal(aidItem.quantity, 3);
+  assert.equal(aidItem.location, "Vehicle-associated: Vulture(Clone)76 (prefab reference; mounting/storage unknown)");
+  assert.equal(weedItem.quantity, 4);
+  assert.equal(weedItem.location, "Unresolved parent / container");
+  for (const [item, value] of [[aidItem, 5], [weedItem, 7]]) {
+    const field = doc.fields.find(candidate => candidate.id === item.fieldIds[0]);
+    assert.match(field.id, /:Quantity$/);
+    assert.equal(field.bulkTarget, undefined);
+    const changed = inspect(serialize(text, { [field.id]: value }));
+    assert.equal(changed.items.find(candidate => candidate.id === item.id).quantity, value);
+  }
+  assert.equal(serialize(text, {}), text);
+});
+
 test("loose and unresolved-parent parts can be edited independently without ownership changes", () => {
   const text = domainSave({ worldItems: true });
   const doc = inspect(text);
