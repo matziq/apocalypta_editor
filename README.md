@@ -107,29 +107,34 @@ Different instances with the same friendly name have separate controls and revie
 
 World or camp items do not need to be attached to a vehicle or proven to belong to the player before their saved scalar values can be edited. The same mounted-part control is shared between the item and vehicle views, so edits stay consistent with **Repair components**. A parent reference that cannot be resolved is still shown as unknown; this list is not presented as a carried-inventory count.
 
-When an item's saved parent appears uniquely in a matched vehicle's `es3Prefab.refs` map, its location says **Vehicle-associated**. This establishes reference-map membership only: it does not distinguish mounting from storage or prove player possession. Ambiguous maps stay unresolved. These associations never add component-repair or vehicle-top-off targets; those actions still require the existing explicit mount/tank evidence.
+When an item's saved parent appears uniquely in a matched vehicle's `es3Prefab.refs` map, its location says **Vehicle-associated** unless a specific mount is independently verified. General reference-map membership does not distinguish mounting from storage or prove player possession. Ambiguous maps stay unresolved. General associations never add component-repair or vehicle-top-off targets; those actions require explicit mount/tank evidence.
 
-**Inspect** opens items with no safely editable fields and explains the limitation. Available unsupported scalar values are shown read-only with reasons. In the inspected saves, loose engines and radiators save `Condition`, and ammo boxes save their own `ammo` count. Many exhausts, wheels, and tools have no supported per-item scalar record. Engine, radiator, and growing-item liquids still lack verified bounds and remain read-only. Unknown timers, growth values, gearing, and purchase-state fields remain unchanged. This does not claim that every property of every prefab is stored or editable.
+**Inspect** opens items with no safely editable fields and explains the limitation. Available unsupported scalar values are shown read-only with reasons. In the inspected saves, loose engines and radiators save `Condition`, and ammo boxes save their own `ammo` count. The pictured Small wheel T1, Small wheel T2, and Armored Street Wheel save condition as a standalone float keyed by the exact instance name: these are editable only with a unique item name and reference and the verified matching prefab. Their scalar has no owner reference, and its name alone does not establish mounting. Use **Saved items → Edit values** or that page's **Maximize all**; Vulture wheels at uniquely resolved wheel-hinge parents are also included in vehicle repair. A wheel at the physics-lock parent is not treated as mounted. Other wheels, exhausts, tools, engine liquids, and growing-item liquids may remain read-only. Grip, radiator cooling, and supercharger power are prefab/gameplay properties, not verified per-instance saved scalars. Unknown timers, growth values, gearing, and purchase-state fields remain unchanged.
 
-Three missing-capacity container mappings were verified against the installed game's actual prefab IDs and live `LiquidAmount` FSM variables:
+Missing-capacity mappings were verified against the installed game's actual prefab IDs and `LiquidAmount` FSM variables:
 
 | Saved prefab base name | Exact ES3 prefab ID | Capacity (saved units) |
 | --- | --- | --- |
 | `MotorOil_Can_Small` | `5864412579365047585` | 5 |
 | `Gasoline_Can` | `6858519991654959144` | 20 |
 | `Water_Can_Plastic` | `4230013134874058846` | 13 |
+| `Diesel_Barrel` | `608293236901033563` | 150 |
+| `MotorOil_Can_Big` | `5623108999256334996` | 30 |
+| `radiator_medium_race` | `2169926468007209799` | 14 |
 
 Fallback requires the exact base name and matching prefab IDs in **both** the saved object and its reference-matched scalar owner. The inspector displays the capacity source. A present capacity always takes precedence; an invalid present capacity is never replaced with a prefab guess. No `LiquidCapacity` field is inserted into the save. Other or conflicting prefab identities stay read-only. These mappings reflect the inspected game assets, not an assurance for future versions that reuse IDs with changed behavior.
 
 Duplicate object references across item and vehicle arrays are marked ambiguous and withheld from editing. The `akms(Clone)50` instance is labeled by its saved identifier (AKMS); it is not renamed AK47. Its loaded-round counter remains weapon-type scoped; an ammo box's own `ammo` value is separately instance-scoped.
 
-The **Vehicles** view joins each vehicle to its scalar record by a unique matching ES3 reference. Fuel is editable only when both `Liquid` and `LiquidCapacity` are valid and consistent; the save has no explicit unit label, so L follows the game's player-facing units as described by the user. Engine, radiator, and exhaust condition is shown only when its saved transform parent matches that vehicle's corresponding mount. A separate vehicle-body damage/condition scalar was not found. Unresolved or ambiguous associations remain read-only with an explanation; the editor does not spawn, delete, or relink objects.
+The **Vehicles** view joins each vehicle to its scalar record by a unique matching ES3 reference. Fuel is editable only when both `Liquid` and `LiquidCapacity` are valid and consistent; the save has no explicit unit label, so L follows the game's player-facing units as described by the user. Engine, radiator, and exhaust condition is shown only when its saved transform parent matches that vehicle's corresponding mount. The three verified wheel prefabs also appear when their unique parent matches a verified Vulture wheel hinge and both vehicle prefab identities agree. A separate vehicle-body damage/condition scalar was not found. Unresolved or ambiguous associations remain read-only with an explanation; the editor does not spawn, delete, or relink objects.
 
 ## Format and compatibility
 
 Inspected against local `SaveGame1.es3`, `SaveGame2.es3`, and `SaveSettings.es3`, with additional read-only assembly and prefab/FSM checks on November 12, 2026. No explicit save-schema marker was observed; support is **structural**, not a guarantee for every release.
 
 Mapping evidence in the installed Unity 2020.3.49f1 `data.unity3d`: `sharedassets1.assets` oil/gasoline/water GameObjects 13681/8948/20904 have matching ES3Prefab IDs and `LiquidAmount` FSMs 105672/104007/108401; their live capacity variables are 5/20/13. `level1` survival FSMs 11831/11833/11842/11836 clamp Hunger/Thirst/Fatigue/Radiation from 0 to 100. Per-key settings Load/Save FSMs 13403/12636/11994/12123/13387 correspond to automatic gearbox/autoclutch/normalized input/bloom/sharpen. These assets were inspected in memory only; the editor needs no installation assets at runtime.
+
+Additional `sharedassets1.assets` evidence: Diesel Barrel and big oil can GameObjects 31081/32544 have `LiquidAmount` FSMs 112013/112440 with capacities 150/30; the medium race radiator GameObject 24474 has a cap-child `LiquidAmount` FSM 109626 with capacity 14. Wheel GameObjects 19728/24165/10145 use `saveItemVar` FSMs 103785/103388/104446 to save and load `Condition` by object name; their HUD FSMs 107940/109448/104440 identify the three wheel labels. Vulture GameObject 9130's ES3Prefab 108980 maps the verified wheel-hinge keys to four transforms, separately from its PhysicsLock transform. A current save value matching a screenshot is suggestive, not proof of the same instance.
 
 Settings use ordinary typed entries such as:
 

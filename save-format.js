@@ -43,7 +43,23 @@
   const liquidPrefabs = {
     "5864412579365047585": { name: "MotorOil_Can_Small", capacity: 5 },
     "6858519991654959144": { name: "Gasoline_Can", capacity: 20 },
-    "4230013134874058846": { name: "Water_Can_Plastic", capacity: 13 }
+    "4230013134874058846": { name: "Water_Can_Plastic", capacity: 13 },
+    "608293236901033563": { name: "Diesel_Barrel", capacity: 150 },
+    "5623108999256334996": { name: "MotorOil_Can_Big", capacity: 30 },
+    "2169926468007209799": { name: "radiator_medium_race", capacity: 14 }
+  };
+  // These prefabs save Condition as a float under the object's exact name, without an owner wrapper.
+  const wheelPrefabs = {
+    "2321790605670812229": { name: "small_wheel_3", label: "Small wheel T1" },
+    "2184613845620177162": { name: "small_wheel_2", label: "Small wheel T2" },
+    "2663761577720072192": { name: "wheel_2_armored", label: "Armored Street Wheel" }
+  };
+  // Vulture prefab transform reference keys resolved to the four wheel hinges.
+  const wheelMounts = {
+    "3278462540176318831": "Front right wheel",
+    "1533047110744586257": "Rear left wheel",
+    "5305950010086703831": "Front left wheel",
+    "1324165727380696362": "Rear right wheel"
   };
   const switchHelp = {
     peacefulMode: "True enables the game's peaceful-mode setting. The exact affected enemy behaviors have not been independently verified.",
@@ -317,8 +333,14 @@
     const itemObjects = gameObjects("newGOArray_Items");
     const carObjects = gameObjects("newGOArray_Cars");
     const refCounts = new Map();
+    const nameCounts = new Map();
+    const parentCounts = new Map();
     for (const item of [...itemObjects, ...carObjects]) {
       if (item.ref !== null) refCounts.set(item.ref, (refCounts.get(item.ref) || 0) + 1);
+      nameCounts.set(item.name, (nameCounts.get(item.name) || 0) + 1);
+    }
+    for (const item of itemObjects) {
+      if (item.parentRef) parentCounts.set(item.parentRef, (parentCounts.get(item.parentRef) || 0) + 1);
     }
 
     const carMounts = new Map();
@@ -352,6 +374,15 @@
             carMounts.get(transformId).push({ vehicle, mountKey, mountLabel });
           }
         }
+        if (at(car.object, "es3Prefab", "prefabId")?.value === "8734799950597450027" &&
+            at(associated.owner, "es3Prefab", "prefabId")?.value === "8734799950597450027") {
+          for (const [key, mountLabel] of Object.entries(wheelMounts)) {
+            const transformId = at(car.object, "es3Prefab", "refs", key)?.value;
+            if (typeof transformId !== "string") continue;
+            if (!carMounts.has(transformId)) carMounts.set(transformId, []);
+            carMounts.get(transformId).push({ vehicle, mountKey: key, mountLabel, wheelOnly: true });
+          }
+        }
         const liquid = numericValue(at(associated.data, "Liquid"), "float", car.name);
         const capacity = numericValue(at(associated.data, "LiquidCapacity"), "float", car.name);
         if (liquid.value !== undefined && capacity.value !== undefined && capacity.value > 0 && liquid.value >= 0 && liquid.value <= capacity.value) {
@@ -374,10 +405,17 @@
       const referenceIsUnique = item.ref !== null && refCounts.get(item.ref) === 1;
       const associated = referenceIsUnique ? wrapperOwner(item.name) : null;
       const matched = associated && associated.ref === item.ref;
+      const prefabId = at(item.object, "es3Prefab", "prefabId")?.value;
+      const wheel = Object.hasOwn(wheelPrefabs, prefabId) ? wheelPrefabs[prefabId] : null;
+      const wheelRecord = at(tree, item.name);
+      const wheelMatches = referenceIsUnique && nameCounts.get(item.name) === 1 && wheel &&
+        new RegExp(`^${wheel.name}\\(Clone\\)\\d+$`).test(item.name) &&
+        at(wheelRecord, "__type")?.value === "System.Object";
       const itemRecord = {
         id: `item:${item.ref ?? item.name}:${item.index}`,
         name: item.name,
-        displayName: item.name.startsWith("akms(Clone)") ? `AKMS (saved ID: ${item.name})` : readableName(item.name),
+        displayName: wheel && readableName(item.name) === wheel.name ? `${wheel.label} (saved ID: ${item.name})` :
+          item.name.startsWith("akms(Clone)") ? `AKMS (saved ID: ${item.name})` : readableName(item.name),
         ref: item.ref,
         active: item.active,
         tag: item.tag,
@@ -410,12 +448,14 @@
             }
           } else itemRecord.warnings.push("Saved quantity is outside the safe editable range (1 to 2,147,483,647); shown read-only.");
         } else if (at(associated.data, "Quantity")) itemRecord.warnings.push(quantity.error);
-      } else if (referenceIsUnique) {
+      } else if (referenceIsUnique && !wheelMatches) {
         itemRecord.warnings.push("No uniquely matching typed item record; this existing object is shown read-only.");
       }
 
       const partLinks = item.parentRef ? carMounts.get(item.parentRef) || [] : [];
-      const linkedCars = partLinks.filter(link => link.vehicle && link.vehicle.ref && vehicleByRef.get(link.vehicle.ref) === link.vehicle);
+      const linkedCars = partLinks.filter(link => link.vehicle && link.vehicle.ref &&
+        vehicleByRef.get(link.vehicle.ref) === link.vehicle &&
+        (!link.wheelOnly || (wheelMatches && parentCounts.get(item.parentRef) === 1)));
       itemRecord.attachedTo = linkedCars.length === 1 ? `${linkedCars[0].vehicle.name} · ${linkedCars[0].mountLabel}` : null;
       if (linkedCars.length === 1) {
         itemRecord.location = `Attached to ${linkedCars[0].vehicle.name} (${linkedCars[0].mountLabel})`;
@@ -430,6 +470,23 @@
           itemRecord.location = `Vehicle-associated: ${candidates[0].name} (prefab reference; mounting/storage unknown)`;
         } else if (candidates.length > 1) {
           itemRecord.warnings.push("Parent reference occurs in more than one vehicle prefab map; vehicle association is withheld.");
+        }
+      }
+
+      if (wheelMatches) {
+        const node = at(wheelRecord, "value");
+        const condition = numericValue(node, "float", item.name);
+        if (condition.value !== undefined && Boolean(node.implicit) !== Boolean(at(node, "value")) &&
+            condition.value >= 0 && condition.value <= 100) {
+          const field = add(`${itemRecord.id}:Condition`, `${item.name} condition (%)`,
+            linkedCars.length === 1 ? `${linkedCars[0].vehicle.name} components` : "Other saved item condition",
+            node, "float", 0, 100, linkedCars.length === 1 ? "vehicles" : "items",
+            "Wheel condition saved under this unique object name; the scalar has no owner reference. Mounting is not established by this name.");
+          itemRecord.condition = field.value;
+          itemRecord.fieldIds.push(field.id);
+          if (linkedCars.length === 1) linkedCars[0].vehicle.fieldIds.push(field.id);
+        } else {
+          itemRecord.warnings.push(condition.error || "Wheel condition has an ambiguous structure or is outside 0–100; preserved read-only.");
         }
       }
 
@@ -464,7 +521,6 @@
 
         const liquid = numericValue(at(associated.data, "Liquid"), "float", item.name);
         const capacityNode = at(associated.data, "LiquidCapacity");
-        const prefabId = at(item.object, "es3Prefab", "prefabId")?.value;
         const knownPrefab = Object.hasOwn(liquidPrefabs, prefabId) ? liquidPrefabs[prefabId] : null;
         const verifiedPrefab = knownPrefab && readableName(item.name) === knownPrefab.name &&
           at(associated.owner, "es3Prefab", "prefabId")?.value === prefabId ? knownPrefab : null;

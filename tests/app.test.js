@@ -794,3 +794,25 @@ test("item inspector shows verified prefab capacity evidence without claiming mo
   ui.elements.get("item-filter").events.input();
   assert.match(ui.elements.get("item-filter-status").textContent, /1 of 3/);
 });
+
+test("pictured wheel condition and coolant are editable in the inline item inspector", () => {
+  const ui = app();
+  seedWorldItems(ui);
+  vm.runInContext(`
+    const root = JSON.parse(worldText);
+    const wheel = { name: "small_wheel_3(Clone)10", _ES3Ref: "wheel-1", active: true,
+      es3Prefab: { prefabId: "2321790605670812229" }, components: [{ __type: "Transform", parent: null }] };
+    const radiator = { name: "radiator_medium_race(Clone)11", _ES3Ref: "rad-1", active: true,
+      es3Prefab: { prefabId: "2169926468007209799" }, components: [{ __type: "Transform", parent: null }] };
+    root.newGOArray_Items.value.array.push(wheel, radiator);
+    root[wheel.name] = { __type: "System.Object", value: { __type: "float", value: 24 } };
+    root[radiator.name] = { __type: "ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass",
+      value: { objs: { owner: { _ES3Ref: "rad-1", es3Prefab: radiator.es3Prefab }, Liquid: { __type: "float", value: 0.3 } } } };
+    doc = ApocalypterSave.inspect(JSON.stringify(root)); render(); selectItem(doc.items[3].id);
+  `, ui.context);
+  assert.equal(vm.runInContext('inputs.get(doc.items[3].fieldIds[0]).value', ui.context), "24");
+  vm.runInContext('inputs.get(doc.items[3].fieldIds[0]).value = "100"; refresh(); selectItem(doc.items[4].id);', ui.context);
+  assert.equal(vm.runInContext('changes.get(doc.items[3].fieldIds[0])', ui.context), 100);
+  assert.equal(vm.runInContext('inputs.get(doc.items[4].fieldIds[0]).value', ui.context), "0.3");
+  assert.equal(vm.runInContext('doc.items[4].liquid.capacity', ui.context), 14);
+});

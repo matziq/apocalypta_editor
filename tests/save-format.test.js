@@ -355,7 +355,10 @@ test("exact verified prefab identities provide item bounds without adding a save
   for (const [name, prefabId, capacity] of [
     ["MotorOil_Can_Small", "5864412579365047585", 5],
     ["Gasoline_Can", "6858519991654959144", 20],
-    ["Water_Can_Plastic", "4230013134874058846", 13]
+    ["Water_Can_Plastic", "4230013134874058846", 13],
+    ["Diesel_Barrel", "608293236901033563", 150],
+    ["MotorOil_Can_Big", "5623108999256334996", 30],
+    ["radiator_medium_race", "2169926468007209799", 14]
   ]) {
     const text = JSON.stringify(prefabLiquidSave(name, prefabId));
     const doc = inspect(text);
@@ -369,6 +372,111 @@ test("exact verified prefab identities provide item bounds without adding a save
     assert.throws(() => serialize(text, { [id]: capacity + 0.01 }), /between/);
     assert.equal(serialize(text, {}), text);
   }
+});
+
+function wheelSave(name = "small_wheel_3", prefabId = "2321790605670812229") {
+  const savedName = `${name}(Clone)1`;
+  const object = gameObject(savedName, 801, 8001);
+  object.es3Prefab = { prefabId, refs: {} };
+  return {
+    Player: pm({ Health: { __type: "float", value: 100 } }),
+    newGOArray_Items: pm(null, [object]),
+    [savedName]: { __type: "System.Object", value: { __type: "float", value: 24.5 } }
+  };
+}
+
+test("verified wheels edit the exact name-keyed condition without changing other bytes", () => {
+  for (const [name, id, label] of [
+    ["small_wheel_3", "2321790605670812229", "Small wheel T1"],
+    ["small_wheel_2", "2184613845620177162", "Small wheel T2"],
+    ["wheel_2_armored", "2663761577720072192", "Armored Street Wheel"]
+  ]) {
+    const text = JSON.stringify(wheelSave(name, id));
+    const doc = inspect(text), item = doc.items[0];
+    assert.match(item.displayName, new RegExp(label));
+    assert.equal(item.condition, 24.5);
+    const field = doc.fields.find(field => field.id === item.fieldIds[0]);
+    assert.equal(field.id.endsWith(":Condition"), true);
+    assert.equal(serialize(text, {}), text);
+    assert.equal(serialize(text, { [field.id]: 100 }), text.slice(0, field.start) + "100" + text.slice(field.end));
+    assert.throws(() => serialize(text, { [field.id]: 101 }), /between/);
+  }
+});
+
+test("name-keyed wheel condition refuses ambiguous, mismatched and malformed records", () => {
+  const scenarios = [
+    root => root.newGOArray_Items.value.array.push(gameObject("small_wheel_3(Clone)1", 802, 8002)),
+    root => root.newGOArray_Items.value.array.push(gameObject("other(Clone)2", 801, 8002)),
+    root => { root.newGOArray_Items.value.array[0].es3Prefab.prefabId = "2184613845620177162"; },
+    root => { root["small_wheel_3(Clone)1"].__type = "Other"; },
+    root => { root["small_wheel_3(Clone)1"].value.__type = "int"; },
+    root => { root["small_wheel_3(Clone)1"].value.value = 101; },
+    root => { delete root["small_wheel_3(Clone)1"]; }
+  ];
+  for (const change of scenarios) {
+    const root = wheelSave();
+    change(root);
+    const text = JSON.stringify(root);
+    assert.equal(inspect(text).items[0].condition, null);
+    assert.equal(serialize(text, {}), text);
+  }
+  const ambiguous = JSON.stringify(wheelSave()).replace('"__type":"float","value":24.5', '"__type":"float"24.5,"value":10');
+  assert.equal(inspect(ambiguous).items[0].condition, null);
+});
+
+test("item maximization includes name-keyed wheels and verified liquids without treating cargo as mounted", () => {
+  const Actions = require("../vehicle-actions.js");
+  const root = wheelSave();
+  const liquid = prefabLiquidSave("Diesel_Barrel", "608293236901033563");
+  liquid.newGOArray_Items.value.array[0]._ES3Ref = "802";
+  liquid["Diesel_Barrel(Clone)1"].value.objs.owner._ES3Ref = "802";
+  root.newGOArray_Items.value.array.push(liquid.newGOArray_Items.value.array[0]);
+  root["Diesel_Barrel(Clone)1"] = liquid["Diesel_Barrel(Clone)1"];
+  const car = gameObject("car(Clone)2", 900, 9000);
+  car.es3Prefab = { refs: { child: "cargo-parent" } };
+  root.newGOArray_Items.value.array.forEach(item => { item.components[0].parent = { _ES3Ref: "cargo-parent" }; });
+  root.newGOArray_Cars = pm(null, [car]);
+  root[car.name] = itemRecord(car.name, 900, {});
+  const text = JSON.stringify(root), doc = inspect(text), changes = {};
+  const result = Actions.maximizeItems(doc.items, doc.fields, field => ({ value: field.value, invalid: false }),
+    (field, value) => { changes[field.id] = value; }, require("../save-format.js").validate);
+  assert.equal(result.staged, 2);
+  assert.deepEqual(Object.values(changes), [100, 150]);
+  assert.equal(doc.vehicles[0].parts.length, 0);
+  const edited = inspect(serialize(text, changes));
+  assert.equal(edited.items[0].condition, 100);
+  assert.equal(edited.items[1].liquid.value, 150);
+});
+
+test("Vulture wheel hinges repair only uniquely matched wheels, not physics-lock cargo", () => {
+  const Actions = require("../vehicle-actions.js");
+  const root = wheelSave(), car = gameObject("Vulture(Clone)2", 900, 9000);
+  car.es3Prefab = { prefabId: "8734799950597450027", refs: { "5305950010086703831": "front-left", "2086200191613234582": "physics-lock" } };
+  root.newGOArray_Cars = pm(null, [car]);
+  root[car.name] = itemRecord(car.name, 900, {});
+  root[car.name].value.objs.owner.es3Prefab = { prefabId: "8734799950597450027" };
+  root.newGOArray_Items.value.array[0].components[0].parent = { _ES3Ref: "front-left" };
+  let doc = inspect(JSON.stringify(root));
+  assert.match(doc.items[0].attachedTo, /Front left wheel/);
+  assert.deepEqual(doc.vehicles[0].fieldIds, doc.items[0].fieldIds);
+  const changes = {};
+  const result = Actions.stage(doc.vehicles[0], doc.fields, "repair", field => ({ value: field.value, invalid: false }),
+    (field, value) => { changes[field.id] = value; }, require("../save-format.js").validate);
+  assert.equal(result.staged, 1);
+  assert.equal(Object.values(changes)[0], 100);
+  root.newGOArray_Items.value.array[0].components[0].parent._ES3Ref = "physics-lock";
+  doc = inspect(JSON.stringify(root));
+  assert.equal(doc.items[0].attachedTo, null);
+  assert.equal(doc.vehicles[0].fieldIds.length, 0);
+  root.newGOArray_Items.value.array[0].components[0].parent._ES3Ref = "front-left";
+  root.newGOArray_Items.value.array.push(gameObject("other(Clone)3", 803, 8003, "front-left"));
+  doc = inspect(JSON.stringify(root));
+  assert.equal(doc.items[0].attachedTo, null);
+  assert.equal(doc.vehicles[0].fieldIds.length, 0);
+  root.newGOArray_Items.value.array.pop();
+  root[car.name].value.objs.owner.es3Prefab.prefabId = "wrong";
+  doc = inspect(JSON.stringify(root));
+  assert.equal(doc.items[0].attachedTo, null);
 });
 
 test("prefab liquid fallback refuses missing, conflicting, misnamed and ambiguous identities", () => {
