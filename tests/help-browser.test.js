@@ -25,6 +25,43 @@ async function launchBrowser() {
   });
 }
 
+test("saved coordinate plot and slot list are usable on desktop and mobile", browserOptions, async () => {
+  const { origin, fixture } = await syntheticBridge();
+  const pm = objs => ({ __type: "ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass", value: { objs } });
+  const object = (name, ref, id, parent, x, z) => ({ name, _ES3Ref: ref, transformID: id,
+    components: [{ __type: "Transform", _ES3Ref: id, goID: ref, parent, localPosition: { x, y: 0, z } }] });
+  const player = object("Player", "4908172907895950466", "9005913460443800891", null, 0, 0);
+  const item = object("supply(Clone)1", "item", "item-transform", null, 300, 400);
+  const slot = object("bandage(Clone)2", "bandage", "bandage-transform", { _ES3Ref: "6374689825314962276" }, 0, 0);
+  fs.writeFileSync(path.join(fixture, "SaveGame1.es3"), JSON.stringify({
+    Player: pm({ Health: { __type: "float", value: 100 }, Player: player }),
+    newGOArray_Items: { value: { array: [item, slot] } }
+  }));
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const errors = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.goto(origin);
+    await page.waitForFunction(() => !!doc && !openingNative);
+    await page.getByRole("tab", { name: "Saved items" }).click();
+    await page.locator(".item-discovery summary").click();
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 800 }]) {
+      await page.setViewportSize(viewport);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      assert.match(await page.locator("#slot-list").innerText(), /Bandage slot.*bandage\(Clone\)2/);
+      assert.match(await page.locator("#map-note").innerText(), /1 of 2.*1 are omitted/);
+      const marker = page.locator("#item-map .map-item");
+      assert.match(await marker.getAttribute("aria-label"), /500 horizontal world units/);
+      await marker.focus();
+      await page.keyboard.press("Enter");
+      assert.match(await page.locator("#map-selection").innerText(), /supply\(Clone\)1/);
+      assert.equal(await page.evaluate(() => changes.size), 0);
+    }
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});
+
 test("native backup controls persist, preserve inline drafts, and honor zero and stale-policy safety", browserOptions, async () => {
     const { origin, fixture, token } = await syntheticBridge();
     const post = (route, body) => fetch(origin + route, {
@@ -195,7 +232,9 @@ test("Repair & Top Off autosaves verified supplies without changing unplated arm
   const target = path.join(fixture, "SaveGame1.es3");
   fs.writeFileSync(target, JSON.stringify({
     Ammo: pm({ armor: { __type: "float", value: 0 }, armorPlates: { __type: "int", value: 0 },
-      ammo_9mm: { __type: "int", value: 4 }, ammo_9mm_capacity: { __type: "int", value: 40 } }),
+      ammo_9mm: { __type: "int", value: 4 }, ammo_9mm_capacity: { __type: "int", value: 40 },
+      ammo_20gauge_capacity: { __type: "int", value: 40 }, ammo_arrow_capacity: { __type: "int", value: 40 },
+      ammo_battery_capacity: { __type: "int", value: 40 } }),
     global: pm({ Money: { __type: "int", value: 42 } }),
     newGOArray_Items: { value: { array: [{ name, _ES3Ref: ref, es3Prefab: prefab },
       { name: batteryName, _ES3Ref: batteryRef, es3Prefab: batteryPrefab }] } },
@@ -218,7 +257,8 @@ test("Repair & Top Off autosaves verified supplies without changing unplated arm
     assert.equal(saved.Ammo.value.objs.armor.value, 0);
     assert.equal(saved.Ammo.value.objs.armorPlates.value, 0);
     assert.equal(saved.Ammo.value.objs.ammo_9mm.value, 999);
-    assert.equal(saved.Ammo.value.objs.ammo_9mm_capacity.value, 40);
+    for (const name of ["9mm", "20gauge", "arrow"]) assert.equal(saved.Ammo.value.objs[`ammo_${name}_capacity`].value, 999);
+    assert.equal(saved.Ammo.value.objs.ammo_battery_capacity.value, 40);
     assert.equal(saved.global.value.objs.Money.value, 900000);
     assert.equal(saved[name].value.objs.Quantity.value, 999);
     assert.equal(saved[batteryName].value.objs.batteries.value, 999);
@@ -314,7 +354,8 @@ test("bulk targets persist across native bridge origins and invalid settings nev
   const target = path.join(fixture, "SaveGame1.es3");
   fs.writeFileSync(target, JSON.stringify({
     Ammo: pm({ armor: { __type: "float", value: 0 }, armorPlates: { __type: "int", value: 0 },
-      ammo_9mm: { __type: "int", value: 4 }, ammo_9mm_capacity: { __type: "int", value: 40 } }),
+      ammo_9mm: { __type: "int", value: 4 }, ammo_9mm_capacity: { __type: "int", value: 40 },
+      ammo_20gauge_capacity: { __type: "int", value: 40 }, ammo_arrow_capacity: { __type: "int", value: 40 } }),
     global: pm({ Money: { __type: "int", value: 42 } })
   }));
   const browser = await launchBrowser();
@@ -335,7 +376,8 @@ test("bulk targets persist across native bridge origins and invalid settings nev
     await page.locator("#autosave").uncheck();
     await page.locator("#maximize-player").click();
     assert.equal(await page.evaluate(() => changes.get("Ammo.ammo_9mm")), 999);
-    assert.equal(await page.evaluate(() => changes.has("Ammo.ammo_9mm_capacity")), false);
+    for (const name of ["9mm", "20gauge", "arrow"])
+      assert.equal(await page.evaluate(name => changes.get(`Ammo.ammo_${name}_capacity`), name), 999);
     assert.equal(await page.evaluate(() => changes.has("Ammo.armor")), false);
     await page.locator("#reset").click();
     for (const [key, value] of Object.entries({ ammo: "321", consumables: "765", nuts: "12345", liquids: "25" })) {

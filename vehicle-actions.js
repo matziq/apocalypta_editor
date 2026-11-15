@@ -59,7 +59,7 @@
   function maximize(fields, readValue, writeValue, validate, targets = defaultTargets) {
     checkedTargets(targets);
     const result = { staged: 0, skipped: [] };
-    for (const field of fields.filter(field => field.section === "player" && field.id !== "Ammo.armor" && !field.id.endsWith("_capacity"))) {
+    for (const field of fields.filter(field => field.section === "player" && field.id !== "Ammo.armor" && (!field.id.endsWith("_capacity") || field.topOffConsumable))) {
       const target = field.id === "global.Money" ? targets.nuts : field.topOffConsumable ? targets.ammo :
         /^global\.(Hunger|Thirst|Fatigue|Radiation)$/.test(field.id) ? 0 : 100;
       if (readValue(field).invalid) { result.skipped.push(field.label); continue; }

@@ -70,7 +70,7 @@ FORM: Familiar desktop utility, with an in-place before/after review instead of 
       <hr>
       <h2>Bulk targets</h2>
       <p>Apply targets before using Maximize all or Repair &amp; Top Off. Changing these settings does not edit a save.</p>
-      <label class="filter-label" for="target-ammo">Ammo count</label>
+      <label class="filter-label" for="target-ammo">Ammo count and selected capacities</label>
       <input class="bulk-target" id="target-ammo" type="number" min="0" max="2147483647" step="1" required>
       <label class="filter-label" for="target-consumables">Consumable count</label>
       <input class="bulk-target" id="target-consumables" type="number" min="1" max="2147483647" step="1" required>
@@ -93,6 +93,16 @@ FORM: Familiar desktop utility, with an in-place before/after review instead of 
       <section id="items-panel" hidden aria-label="Saved item instances">
         <h3>Saved item instances</h3>
         <p id="items-note"></p>
+        <details class="item-discovery">
+          <summary>Equipment slots and saved-item coordinate plot</summary>
+          <h4>Equipment slots</h4>
+          <p>These slot labels are user-identified and only appear when the saved player reference matches. Attached items require an exact parent; Bandage and First Aid additionally require zero local offset. Absence does not prove a slot is empty.</p>
+          <ul id="slot-list"></ul>
+          <h4>Saved-item coordinate plot</h4>
+          <p id="map-note"></p>
+          <svg id="item-map" viewBox="0 0 800 440" role="group" aria-label="Saved-item world coordinate plot"></svg>
+          <p id="map-selection" role="status" aria-live="polite">Select a marker to inspect an item.</p>
+        </details>
         <label class="filter-label" for="item-filter">Find an item</label>
         <input id="item-filter" type="search" placeholder="Filter by item name or location">
         <label class="check-control" for="editable-only"><input id="editable-only" type="checkbox"> Show editable items only</label>

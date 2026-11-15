@@ -61,6 +61,7 @@ function app({ stored = null, pickerResult, pickerError, native = true, confirm 
     document: {
       body: { dataset: {} },
       createElement: element,
+      createElementNS: element,
       getElementById(id) {
         assert.ok(elements.has(id), `Missing HTML control: ${id}`);
         return elements.get(id);
@@ -467,12 +468,48 @@ test("player bulk action is one coherent autosave, sets exact values, and preser
   assert.equal(vm.runInContext("changes.size", ui.context), 0);
 });
 
-test("configured targets apply across bulk entry points, preserve armor and capacity, and survive browser relaunch", async () => {
+test("Player Maximize defaults requested ammo capacities to 999 without touching other capacities or armor", () => {
+  const ints = Object.fromEntries(["9mm", "20gauge", "arrow", "22caliber", "battery"].map(name =>
+    [`ammo_${name}_capacity`, { __type: "int", value: 40 }]));
+  const ui = app();
+  nativeFixture(ui, JSON.stringify({ Ammo: pm({ ...ints, armor: scalar(0), armorPlates: { __type: "int", value: 0 } }) }));
+  ui.elements.get("maximize-player").events.click();
+  for (const name of ["9mm", "20gauge", "arrow"]) assert.equal(draft(ui, `Ammo.ammo_${name}_capacity`).value, "999");
+  for (const name of ["22caliber", "battery"]) assert.equal(draft(ui, `Ammo.ammo_${name}_capacity`).value, "40");
+  assert.equal(draft(ui, "Ammo.armor").value, "0");
+  assert.equal(vm.runInContext('changes.has("Ammo.armorPlates")', ui.context), false);
+});
+
+test("saved coordinate plot shows only resolved positions and selects an item without staging edits", () => {
+  const make = (name, ref, id, parent, x, z) => ({ name, _ES3Ref: ref, transformID: id,
+    components: [{ __type: "Transform", _ES3Ref: id, goID: ref, parent, localPosition: { x, y: 0, z } }] });
+  const player = make("Player", "4908172907895950466", "9005913460443800891", null, 0, 0);
+  const found = make("far(Clone)1", "far", "fart", null, 300, 400);
+  const unknown = make("unknown(Clone)2", "unknown", "unknownt", { _ES3Ref: "missing" }, 0, 0);
+  const slot = make("bandage(Clone)3", "bandage", "bandaget", { _ES3Ref: "6374689825314962276" }, 0, 0);
+  const ui = app();
+  nativeFixture(ui, JSON.stringify({ Player: pm({ Health: scalar(100), Player: player }),
+    newGOArray_Items: { value: { array: [found, unknown, slot] } } }));
+  assert.match(ui.elements.get("map-note").textContent, /1 of 3.*2 are omitted/);
+  assert.match(ui.elements.get("slot-list").children[0].textContent, /Bandage slot.*bandage\(Clone\)3/);
+  const map = ui.elements.get("item-map");
+  assert.equal(map.children.length, 2);
+  const marker = map.children[1];
+  assert.match(marker.getAttribute("aria-label"), /500 horizontal world units/);
+  marker.events.click();
+  assert.match(ui.elements.get("map-selection").textContent, /far\(Clone\)1/);
+  assert.equal(ui.elements.get("item-filter").value, "far");
+  assert.equal(vm.runInContext("changes.size", ui.context), 0);
+});
+
+test("configured targets apply across bulk entry points, preserve armor and unrelated capacity, and survive browser relaunch", async () => {
   const ui = app({ native: false });
   seedWorldItems(ui, true);
   const root = JSON.parse(ui.context.worldText);
   root.Ammo = pm({ armor: scalar(0), armorPlates: { __type: "int", value: 0 },
-    ammo_9mm: { __type: "int", value: 2 }, ammo_9mm_capacity: { __type: "int", value: 40 } });
+    ammo_9mm: { __type: "int", value: 2 }, ammo_9mm_capacity: { __type: "int", value: 40 },
+    ammo_20gauge_capacity: { __type: "int", value: 40 }, ammo_arrow_capacity: { __type: "int", value: 40 },
+    ammo_battery_capacity: { __type: "int", value: 40 } });
   root.global = pm({ Money: { __type: "int", value: 3 } });
   root["engine(Clone)2"].value.objs.Liquid = scalar(6);
   root["engine(Clone)2"].value.objs.LiquidCapacity = scalar(8);
@@ -495,7 +532,8 @@ test("configured targets apply across bulk entry points, preserve armor and capa
   assert.equal(draft(ui, "Ammo.ammo_9mm").value, "321");
   assert.equal(draft(ui, "global.Money").value, "12345");
   assert.equal(draft(ui, "Ammo.armor").value, "0");
-  assert.equal(draft(ui, "Ammo.ammo_9mm_capacity").value, "40");
+  for (const name of ["9mm", "20gauge", "arrow"]) assert.equal(draft(ui, `Ammo.ammo_${name}_capacity`).value, "321");
+  assert.equal(draft(ui, "Ammo.ammo_battery_capacity").value, "40");
   vm.runInContext("render()", ui.context);
   ui.elements.get("maximize-items").events.click();
   assert.equal(draft(ui, "item:aid:3:Quantity").value, "765");
@@ -505,6 +543,7 @@ test("configured targets apply across bulk entry points, preserve armor and capa
   ui.elements.get("all-vehicles").events.click();
   assert.equal(draft(ui, "vehicle:car-1:0:fuel").value, "5");
   assert.equal(draft(ui, "Ammo.ammo_9mm").value, "321");
+  for (const name of ["9mm", "20gauge", "arrow"]) assert.equal(draft(ui, `Ammo.ammo_${name}_capacity`).value, "321");
   assert.equal(draft(ui, "item:aid:3:Quantity").value, "765");
   assert.equal(draft(ui, "item:box:4:ammo").value, "321");
   assert.equal(draft(ui, "global.Money").value, "12345");
@@ -663,13 +702,14 @@ test("Repair & Top Off batches verified consumables and Nuts while preserving ar
   await ui.flushTimers();
   assert.equal(ui.fetches.length, 1);
   assert.equal(payload.changes["Ammo.ammo_9mm"], 999);
+  assert.equal(payload.changes["Ammo.ammo_9mm_capacity"], 999);
   assert.equal(payload.changes["weaponsAmmoInGun.ammoakms"], 999);
   assert.equal(payload.changes["global.Money"], 900000);
   for (let index = 0; index < 10; index++) {
     const key = index === 9 ? "batteries" : index === 5 || index === 6 ? "ammo" : "Quantity";
     assert.equal(payload.changes[`item:consumable-${index}:${index + 3}:${key}`], 999);
   }
-  for (const id of ["Ammo.armor", "Ammo.armorPlates", "Ammo.ammo_9mm_capacity",
+  for (const id of ["Ammo.armor", "Ammo.armorPlates",
     "weaponsAmmoInGun.ammoUnknown", "item:consumable-10:13:Quantity", "item:consumable-11:14:Quantity"]) {
     assert.equal(payload.changes[id], undefined, id);
   }

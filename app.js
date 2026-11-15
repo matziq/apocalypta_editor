@@ -566,6 +566,70 @@ function vehiclePartsSummary(vehicle) {
     return `${role}: ${part.displayName} · ${condition}`;
   }).join("; ") : "No component mount references matched.";
 }
+function renderDiscovery() {
+  const slots = $("slot-list");
+  slots.replaceChildren();
+  if (!doc.identifiedSlots.length) {
+    const row = document.createElement("li");
+    row.textContent = "The user-identified player reference is not present in this save.";
+    slots.append(row);
+  }
+  for (const slot of doc.identifiedSlots) {
+    const row = document.createElement("li");
+    row.textContent = `${slot.label} · ref ${slot.ref}: ${slot.items.map(item => item.name).join(", ") || "No confirmed item"}`;
+    slots.append(row);
+  }
+  const map = $("item-map");
+  map.replaceChildren();
+  const located = doc.items.filter(item => item.worldPosition);
+  const unresolved = doc.items.length - located.length;
+  const player = doc.playerPosition;
+  $("map-note").textContent = `${located.length} of ${doc.items.length} items have resolvable world positions; ${unresolved} are omitted because their transform or parent chain is unresolved. This is a read-only X/Z coordinate plot, not the game's map. X increases right; Z increases up. ${player ? "The square marks the saved player position." : "Player position is unavailable; distances cannot be calculated."}`;
+  $("map-selection").textContent = located.length ? "Select a marker to inspect an item." : "No saved item positions can be plotted safely.";
+  if (!located.length) return;
+  const points = located.map(item => item.worldPosition);
+  if (player) points.push(player);
+  const { minX, maxX, minZ, maxZ } = points.reduce((bounds, p) => ({
+    minX: Math.min(bounds.minX, p.x), maxX: Math.max(bounds.maxX, p.x),
+    minZ: Math.min(bounds.minZ, p.z), maxZ: Math.max(bounds.maxZ, p.z)
+  }), { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity });
+  if (!Number.isFinite(maxX - minX) || !Number.isFinite(maxZ - minZ)) {
+    $("map-selection").textContent = "The saved coordinate range is too large to plot safely.";
+    return;
+  }
+  const scale = Math.min(752 / Math.max(maxX - minX, 1), 392 / Math.max(maxZ - minZ, 1));
+  const centerX = minX / 2 + maxX / 2, centerZ = minZ / 2 + maxZ / 2;
+  const coordinates = p => [400 + (p.x - centerX) * scale, 220 - (p.z - centerZ) * scale];
+  if (player) {
+    const [x, y] = coordinates(player);
+    const marker = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    for (const [key, value] of Object.entries({ x: x - 5, y: y - 5, width: 10, height: 10, class: "map-player" })) marker.setAttribute(key, value);
+    map.append(marker);
+  }
+  for (const item of located) {
+    const [x, y] = coordinates(item.worldPosition);
+    const marker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    const distance = player ? Math.hypot(item.worldPosition.x - player.x, item.worldPosition.z - player.z) : null;
+    const description = `${item.name}, X ${numericText(item.worldPosition.x)}, Z ${numericText(item.worldPosition.z)}${distance === null ? "" : `, ${numericText(distance)} horizontal world units from player`}`;
+    for (const [key, value] of Object.entries({ cx: x, cy: y, r: 5, class: "map-item", tabindex: 0, role: "button", "aria-label": description })) marker.setAttribute(key, value);
+    const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+    title.textContent = description;
+    marker.append(title);
+    const choose = () => {
+      $("map-selection").textContent = description;
+      $("item-filter").value = item.ref || item.name;
+      $("editable-only").checked = false;
+      filterItems();
+      if (selectedItemId !== item.id) selectItem(item.id);
+      itemRows.get(item.id)?.row.scrollIntoView({ block: "nearest" });
+    };
+    marker.addEventListener("click", choose);
+    marker.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); choose(); }
+    });
+    map.append(marker);
+  }
+}
 function updateSavedSummaries() {
   for (const item of doc.items) {
     const row = itemRows.get(item.id);
@@ -585,9 +649,9 @@ function renderItems() {
   itemRows = new Map();
   $("editable-only").checked = preferences.editableOnly;
   const itemCount = doc.items.length;
-  const unparented = doc.items.filter(item => item.parentRef === null).length;
+  const unparented = doc.items.filter(item => item.parentState === "root").length;
   const associated = doc.items.filter(item => item.associatedVehicle).length;
-  const unresolved = doc.items.filter(item => item.parentRef !== null && !item.attachedTo && !item.associatedVehicle).length;
+  const unresolved = doc.items.filter(item => item.parentState !== "root" && !item.attachedTo && !item.associatedVehicle).length;
   $("items-note").textContent = itemCount
     ? `${itemCount} saved item object${itemCount === 1 ? "" : "s"}. ${unparented} unparented/world-root; ${associated} vehicle-associated by prefab references; ${unresolved} with an unresolved parent. Vehicle association does not establish mounting or storage, and unknown containers are not counted as carried inventory. Select an item to edit its supported saved values.`
     : "This save contains no newGOArray_Items list.";
@@ -600,6 +664,7 @@ function renderItems() {
     row.append(cell);
     rows.append(row);
     filterItems();
+    renderDiscovery();
     return;
   }
   for (const item of doc.items) {
@@ -619,6 +684,11 @@ function renderItems() {
     const location = document.createElement("td");
     location.className = `location${item.parentRef !== null && !item.attachedTo && !item.associatedVehicle ? " unknown" : ""}`;
     location.textContent = item.active === false ? `Inactive · ${item.location}` : item.location;
+    if (item.worldPosition && doc.playerPosition) {
+      const distance = document.createElement("small");
+      distance.textContent = `Horizontal distance: ${numericText(Math.hypot(item.worldPosition.x - doc.playerPosition.x, item.worldPosition.z - doc.playerPosition.z))} world units`;
+      location.append(distance);
+    }
     if (item.parentRef) {
       const reference = document.createElement("small");
       reference.textContent = `Parent ref ${item.parentRef}`;
@@ -657,6 +727,7 @@ function renderItems() {
     rows.append(row, expansion);
   }
   filterItems();
+  renderDiscovery();
 }
 
 function filterItems() {
@@ -965,7 +1036,7 @@ $("maximize-player").addEventListener("click", () => {
   refresh();
   const result = ApocalypterVehicleActions.maximize(doc.fields, readDraft, writeDraft, ApocalypterSave.validate, targets);
   refresh();
-  $("player-action-status").textContent = `Maximize all staged ${result.staged} values: health to 100, ammo to ${targets.ammo}, Nuts to ${targets.nuts}, and Hunger, Thirst, Fatigue and Radiation to 0. Armor, plates, capacities and read-only values were untouched.${result.skipped.length ? ` Could not set: ${result.skipped.join(", ")} (invalid draft or unsupported target).` : ""}`;
+  $("player-action-status").textContent = `Maximize all staged ${result.staged} values: health to 100, ammo and 9mm/20gauge/arrow capacities to ${targets.ammo}, Nuts to ${targets.nuts}, and Hunger, Thirst, Fatigue and Radiation to 0. Armor, plates, other capacities and read-only values were untouched.${result.skipped.length ? ` Could not set: ${result.skipped.join(", ")} (invalid draft or unsupported target).` : ""}`;
   requestAutosave();
 });
 $("maximize-items").addEventListener("click", () => {
@@ -1104,7 +1175,7 @@ for (const [id, text] of [
   ["autosave", "Consent to overwrite the exact native-opened file after each committed valid change, without a separate prompt. Your native backup limit applies; 0 means no recovery copy. Invalid drafts or backup cleanup errors pause saving; errors stop automatic retries. Turning it off keeps pending drafts."],
   ["backup-limit", "Persistent native limit per original save, default 3. Apply removes excess backups made in this editor's exact timestamp/GUID format, preserving the verified recovery point. 0 disables automatic backups and removes eligible existing copies; damaged or overwritten saves then have no automatic recovery. Other files use the limit on their next open/save. Downloaded/unrelated files and links are never pruned."],
   ["editable-only", "Shows only item instances with at least one currently editable field. Combines with text search; hidden items and their drafts are not deleted."],
-  ["maximize-player", "Stages health to 100, carried ammo and Nuts to the applied bulk targets, and Hunger, Thirst, Fatigue and Radiation to 0. Armor, plates and ammo capacities are not changed."],
+  ["maximize-player", "Stages health to 100, carried ammo and 9mm, 20gauge and arrow capacities to the ammo target, Nuts to its target, and Hunger, Thirst, Fatigue and Radiation to 0. Armor, plates and other capacities are not changed."],
   ["maximize-items", "Stages verified conditions to 100%, liquids to the applied percentage of capacity and verified ammo and consumable counts to their applied targets. Unknown counters and invalid drafts are skipped."],
   ["all-vehicles", "Stages verified vehicle repairs, liquids to the applied percentage of capacity, verified ammo and consumable counts to their applied targets, and Nuts to the applied target. Armor, plates and unknown counters are untouched."],
   ["repair-vehicle", "Stages this selected vehicle's reference-matched component Condition values to 100%. It does not repair unlinked or stored spare parts."],

@@ -111,6 +111,101 @@ function gameObject(name, ref, transformId, parentRef = null) {
     }]
   };
 }
+test("world coordinates compose uniquely resolved transforms and reject missing, ambiguous and cyclic parents", () => {
+  const player = gameObject("Player", "4908172907895950466", "9005913460443800891");
+  player.components[0].localPosition = { x: 10, y: 2, z: 20 };
+  const rootItem = gameObject("root(Clone)1", "r", "rt");
+  rootItem.components[0].localPosition = { x: 100, y: 0, z: 200 };
+  rootItem.components[0].localRotation = { x: 0, y: Math.SQRT1_2, z: 0, w: Math.SQRT1_2 };
+  rootItem.components[0].localScale = { x: 2, y: 1, z: 1 };
+  const child = gameObject("child(Clone)2", "c", "ct", "rt");
+  child.components[0].localPosition = { x: 1, y: 0, z: 0 };
+  const zero = gameObject("zero(Clone)3", "z", "zt", "ct");
+  child.components[0].localRotation = { x: 0, y: 0, z: 0, w: 1 };
+  child.components[0].localScale = { x: 1, y: 1, z: 1 };
+  const missing = gameObject("missing(Clone)4", "m", "mt");
+  delete missing.components[0].parent;
+  const malformed = gameObject("malformed(Clone)5", "f", "ft");
+  malformed.components[0].parent = { _ES3Ref: 123 };
+  const absent = gameObject("absent(Clone)6", "a", "at");
+  absent.components = [];
+  const cycle1 = gameObject("cycle(Clone)7", "c1", "c1t", "c2t");
+  const cycle2 = gameObject("cycle(Clone)8", "c2", "c2t", "c1t");
+  for (const o of [cycle1, cycle2]) {
+    o.components[0].localRotation = { x: 0, y: 0, z: 0, w: 1 };
+    o.components[0].localScale = { x: 1, y: 1, z: 1 };
+  }
+  const dup1 = gameObject("dup(Clone)9", "d1", "dt");
+  const dup2 = gameObject("dup(Clone)10", "d2", "dt");
+  const owner1 = gameObject("owner(Clone)11", "duplicate-owner", "o1");
+  const owner2 = gameObject("owner(Clone)12", "duplicate-owner", "o2");
+  const text = JSON.stringify({ Player: pm({ Health: { __type: "float", value: 100 }, Player: player }),
+    newGOArray_Items: pm(null, [rootItem, child, zero, missing, malformed, absent, cycle1, cycle2, dup1, dup2, owner1, owner2]) });
+  const doc = inspect(text);
+  assert.deepEqual(doc.playerPosition, { x: 10, y: 2, z: 20 });
+  assert.deepEqual(doc.items[0].worldPosition, { x: 100, y: 0, z: 200 });
+  for (const item of doc.items.slice(1, 3)) {
+    assert.ok(Math.abs(item.worldPosition.x - 100) < 1e-8);
+    assert.ok(Math.abs(item.worldPosition.z - 198) < 1e-8);
+  }
+  for (const item of doc.items.slice(3)) assert.equal(item.worldPosition, null, item.name);
+  assert.equal(doc.items[3].parentState, "unresolved");
+  assert.equal(doc.items[4].parentState, "unresolved");
+  assert.equal(doc.items[5].parentState, "unresolved");
+  assert.equal(serialize(text, {}), text);
+});
+test("user slot labels require the confirmed player anchor and exact parent with zero offset", () => {
+  const player = gameObject("Player", "4908172907895950466", "9005913460443800891");
+  const slot = gameObject("bandage(Clone)1", "a", "at", "6374689825314962276");
+  const distant = gameObject("bandage(Clone)2", "b", "bt", "6374689825314962276");
+  distant.components[0].localPosition.x = 5;
+  const root = { Player: pm({ Health: { __type: "float", value: 100 }, Player: player }), newGOArray_Items: pm(null, [slot, distant]) };
+  let doc = inspect(JSON.stringify(root));
+  assert.match(doc.items[0].location, /Bandage slot/);
+  assert.doesNotMatch(doc.items[1].location, /Bandage slot/);
+  assert.deepEqual(doc.identifiedSlots.find(s => s.label === "Bandage slot").items.map(i => i.name), ["bandage(Clone)1"]);
+  player._ES3Ref = "other";
+  doc = inspect(JSON.stringify(root));
+  assert.equal(doc.identifiedSlots.length, 0);
+  assert.doesNotMatch(doc.items[0].location, /Bandage slot/);
+});
+test("user-confirmed slots and vehicle containers follow exact parent links, including nested contents", () => {
+  const player = gameObject("Player", "4908172907895950466", "9005913460443800891");
+  const slots = [
+    ["6374689825314962276", "Bandage slot"], ["9124196666788711796", "First Aid Kit slot"],
+    ["3656544721015511630", "Weapon slot 1"], ["1591285762866710851", "Weapon slot 2"],
+    ["2901622336603839876", "Weapon slot 3"], ["6707555155505277952", "Flashlight slot (L)"],
+    ["1007585140629016984", "Body armor slot"], ["5762072836280993281", "Backpack slot"],
+    ["6960692475879471560", "Binoculars slot"]
+  ];
+  const equipped = slots.map(([ref], i) => {
+    const item = gameObject(`equipped(Clone)${i}`, `e${i}`, `et${i}`, ref);
+    if (i > 1) item.components[0].localPosition.x = 2;
+    return item;
+  });
+  const trailer = gameObject("Trailer_Big(Clone)407", "trailer", "trailert");
+  trailer.es3Prefab = { prefabId: "3545007504786799582", refs: { "8038138322462240083": "1052945493227557322" } };
+  const car = gameObject("Vulture(Clone)76", "car", "cart");
+  car.es3Prefab = { prefabId: "8734799950597450027", refs: { "2086200191613234582": "7489528302310536125" } };
+  const crate = gameObject("crate(Clone)1", "crate", "cratet", "1052945493227557322");
+  const nested = gameObject("cargo(Clone)2", "cargo", "cargot", "cratet");
+  const boxItem = gameObject("akms(Clone)3", "akms", "akmst", "7489528302310536125");
+  const root = { Player: pm({ Health: { __type: "float", value: 100 }, Player: player }),
+    newGOArray_Items: pm(null, [...equipped, crate, nested, boxItem]), newGOArray_Cars: pm(null, [trailer, car]) };
+  let doc = inspect(JSON.stringify(root));
+  for (const [i, [, label]] of slots.entries()) {
+    assert.match(doc.items[i].location, new RegExp(label.replace(/[()]/g, "\\$&")));
+    assert.equal(doc.identifiedSlots[i].items[0].name, equipped[i].name);
+  }
+  assert.match(doc.items[9].location, /trailer container/);
+  assert.match(doc.items[10].location, /trailer container/);
+  assert.match(doc.items[11].location, /box in vehicle trunk/);
+  trailer.es3Prefab.prefabId = "wrong";
+  doc = inspect(JSON.stringify(root));
+  assert.doesNotMatch(doc.items[9].location, /trailer container/);
+  assert.doesNotMatch(doc.items[10].location, /trailer container/);
+  assert.match(doc.items[11].location, /box in vehicle trunk/);
+});
 function itemRecord(name, ref, fields) {
   return pm({
     ...fields,
@@ -301,7 +396,7 @@ test("First Aid and Weed expose only their existing stack quantities", () => {
   const aidItem = doc.items.find(item => item.name === aidName);
   const weedItem = doc.items.find(item => item.name === weedName);
   assert.equal(aidItem.quantity, 3);
-  assert.equal(aidItem.location, "Vehicle-associated: Vulture(Clone)76 (prefab reference; mounting/storage unknown)");
+  assert.equal(aidItem.location, "User-identified box in vehicle trunk (saved parent link)");
   assert.equal(weedItem.quantity, 4);
   assert.equal(weedItem.location, "Unresolved parent / container");
   for (const [item, value] of [[aidItem, 5], [weedItem, 7]]) {
@@ -649,7 +744,7 @@ test("battery pack counts support zero, existing positive values and signed-int 
   }
 });
 
-test("Repair & Top Off sets every carried ammo count but leaves capacities, armor and plates unchanged", () => {
+test("Repair & Top Off sets carried ammo and requested capacities but leaves other capacities, armor and plates unchanged", () => {
   const counts = ["22caliber", "9mm", "20gauge", "arrow", "grenade", "12gauge", "556", "762", "3006", "battery"];
   const capacities = ["22caliber", "9mm", "20gauge", "arrow", "battery"];
   const ints = Object.fromEntries([...counts.map(name => [`ammo_${name}`, { __type: "int", value: 2 }]),
@@ -659,12 +754,13 @@ test("Repair & Top Off sets every carried ammo count but leaves capacities, armo
   const doc = inspect(text), changes = {};
   require("../vehicle-actions.js").topOffConsumables(doc.fields, f => ({ value: f.value, invalid: false }),
     (f, value) => { changes[f.id] = value; }, require("../save-format.js").validate);
-  assert.deepEqual(changes, Object.fromEntries(counts.map(name => [`Ammo.ammo_${name}`, 999])));
+  assert.deepEqual(changes, Object.fromEntries([...counts.map(name => [`Ammo.ammo_${name}`, 999]),
+    ...["9mm", "20gauge", "arrow"].map(name => [`Ammo.ammo_${name}_capacity`, 999])]));
   const edited = JSON.parse(serialize(text, changes)).Ammo.value.objs;
   assert.equal(edited.armor.value, 0);
   assert.equal(edited.armorPlates.value, 0);
   assert.equal(edited.unknownCounter.value, 5);
-  for (const name of capacities) assert.equal(edited[`ammo_${name}_capacity`].value, 40);
+  for (const name of capacities) assert.equal(edited[`ammo_${name}_capacity`].value, ["9mm", "20gauge", "arrow"].includes(name) ? 999 : 40);
 });
 
 test("vehicle top-off includes only uniquely mounted verified radiator liquid", () => {

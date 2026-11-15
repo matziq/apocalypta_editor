@@ -307,7 +307,7 @@
       add("Ammo.armor", "Armor", "Supplies", at(ammo, "value", "objs", "armor"), "float", 0, 100, "player");
       for (const name of ammoNames) {
         const field = add(`Ammo.${name}`, name.replace(/^ammo_/, "").replaceAll("_", " "), "Supplies", at(ammo, "value", "objs", name), "int", 0, 2147483647, "player");
-        if (field && !name.endsWith("_capacity")) field.topOffConsumable = true;
+        if (field && (!name.endsWith("_capacity") || ["ammo_9mm_capacity", "ammo_20gauge_capacity", "ammo_arrow_capacity"].includes(name))) field.topOffConsumable = true;
       }
     }
     const globals = at(tree, "global");
@@ -365,6 +365,7 @@
       return array.items.map((object, index) => {
         const transform = at(object, "components")?.items?.find(component => at(component, "__type")?.value === "Transform");
         const parentRef = at(transform, "parent", "_ES3Ref")?.value;
+        const parentNode = at(transform, "parent");
         const positionNode = at(transform, "localPosition");
         const position = positionNode ? Object.fromEntries([...props(positionNode)].map(([key, value]) => [key, scalar(value)])) : null;
         return {
@@ -373,9 +374,12 @@
           ref: at(object, "_ES3Ref")?.value ?? null,
           transformId: at(object, "transformID")?.value ?? null,
           parentRef: typeof parentRef === "string" ? parentRef : null,
+          parentState: parentNode?.kind === "null" ? "root" :
+            typeof parentRef === "string" && parentRef ? "linked" : "unresolved",
           active: at(object, "active")?.value ?? null,
           tag: at(object, "tag")?.value ?? null,
           position,
+          transform,
           object
         };
       });
@@ -394,6 +398,70 @@
 
     const itemObjects = gameObjects("newGOArray_Items");
     const carObjects = gameObjects("newGOArray_Cars");
+    const playerObject = at(player, "value", "objs", "Player");
+    const playerTransform = at(playerObject, "components")?.items?.find(component => at(component, "__type")?.value === "Transform");
+    const playerAnchorMatches = at(playerObject, "_ES3Ref")?.value === "4908172907895950466" &&
+      at(playerObject, "transformID")?.value === "9005913460443800891";
+    let knownSlots = playerAnchorMatches ? {
+      "6374689825314962276": "Bandage slot",
+      "9124196666788711796": "First Aid Kit slot",
+      "3656544721015511630": "Weapon slot 1",
+      "1591285762866710851": "Weapon slot 2",
+      "2901622336603839876": "Weapon slot 3",
+      "6707555155505277952": "Flashlight slot (L)",
+      "1007585140629016984": "Body armor slot",
+      "5762072836280993281": "Backpack slot",
+      "6960692475879471560": "Binoculars slot"
+    } : {};
+    const transformObjects = [...itemObjects, ...carObjects];
+    if (playerTransform) transformObjects.push({ transform: playerTransform, transformId: at(playerObject, "transformID")?.value, ref: at(playerObject, "_ES3Ref")?.value });
+    const transforms = new Map();
+    const ownerCounts = new Map();
+    const transformCounts = new Map();
+    for (const object of transformObjects) {
+      if (typeof object.ref === "string") ownerCounts.set(object.ref, (ownerCounts.get(object.ref) || 0) + 1);
+      if (typeof object.transformId === "string") transformCounts.set(object.transformId, (transformCounts.get(object.transformId) || 0) + 1);
+    }
+    for (const object of transformObjects) {
+      const id = object.transformId;
+      if (typeof id !== "string" || at(object.transform, "_ES3Ref")?.value !== id ||
+          at(object.transform, "goID")?.value !== object.ref || ownerCounts.get(object.ref) !== 1 ||
+          transformCounts.get(id) !== 1) continue;
+      transforms.set(id, object.transform);
+    }
+    if (transforms.get(at(playerObject, "transformID")?.value) !== playerTransform) knownSlots = {};
+    function vector(node, keys) {
+      const result = Object.fromEntries(keys.map(key => [key, scalar(at(node, key))]));
+      return keys.every(key => Number.isFinite(result[key])) ? result : null;
+    }
+    function worldPosition(transform) {
+      const ownId = at(transform, "_ES3Ref")?.value;
+      if (typeof ownId !== "string" || transforms.get(ownId) !== transform) return null;
+      let point = vector(at(transform, "localPosition"), ["x", "y", "z"]);
+      if (!point) return null;
+      const visited = new Set([at(transform, "_ES3Ref")?.value]);
+      while (true) {
+        const parent = at(transform, "parent");
+        if (parent?.kind === "null") return point;
+        const id = at(parent, "_ES3Ref")?.value;
+        if (typeof id !== "string" || visited.has(id) || !transforms.get(id)) return null;
+        visited.add(id);
+        transform = transforms.get(id);
+        const position = vector(at(transform, "localPosition"), ["x", "y", "z"]);
+        const scale = vector(at(transform, "localScale"), ["x", "y", "z"]);
+        const q = vector(at(transform, "localRotation"), ["x", "y", "z", "w"]);
+        if (!position || !scale || !q || Math.abs(Math.hypot(q.x, q.y, q.z, q.w) - 1) > 0.001) return null;
+        const x = point.x * scale.x, y = point.y * scale.y, z = point.z * scale.z;
+        const tx = 2 * (q.y * z - q.z * y), ty = 2 * (q.z * x - q.x * z), tz = 2 * (q.x * y - q.y * x);
+        point = {
+          x: position.x + x + q.w * tx + q.y * tz - q.z * ty,
+          y: position.y + y + q.w * ty + q.z * tx - q.x * tz,
+          z: position.z + z + q.w * tz + q.x * ty - q.y * tx
+        };
+        if (!Object.values(point).every(Number.isFinite)) return null;
+      }
+    }
+    const playerPosition = playerTransform ? worldPosition(playerTransform) : null;
     const refCounts = new Map();
     const nameCounts = new Map();
     const parentCounts = new Map();
@@ -465,6 +533,30 @@
       vehicles.push(vehicle);
     }
 
+    const confirmedContainers = new Map();
+    for (const car of carObjects) {
+      const prefab = at(car.object, "es3Prefab", "prefabId")?.value;
+      const refs = at(car.object, "es3Prefab", "refs");
+      const uniqueContainerRef = ref => carObjects.filter(candidate =>
+        [...props(at(candidate.object, "es3Prefab", "refs")).values()].some(value => value.kind === "string" && value.value === ref)).length === 1;
+      if (car.ref && refCounts.get(car.ref) === 1 && prefab === "3545007504786799582" && uniqueContainerRef("1052945493227557322") &&
+          at(refs, "8038138322462240083")?.value === "1052945493227557322")
+        confirmedContainers.set("1052945493227557322", "User-identified trailer container");
+      if (car.ref && refCounts.get(car.ref) === 1 && prefab === "8734799950597450027" && uniqueContainerRef("7489528302310536125") &&
+          at(refs, "2086200191613234582")?.value === "7489528302310536125")
+        confirmedContainers.set("7489528302310536125", "User-identified box in vehicle trunk");
+    }
+    function identifiedContainer(item) {
+      let parent = item.parentRef;
+      const visited = new Set();
+      while (parent && !visited.has(parent)) {
+        if (confirmedContainers.has(parent)) return confirmedContainers.get(parent);
+        visited.add(parent);
+        const transform = transforms.get(parent);
+        parent = at(transform, "parent", "_ES3Ref")?.value;
+      }
+      return null;
+    }
     for (const item of itemObjects) {
       const referenceIsUnique = item.ref !== null && refCounts.get(item.ref) === 1;
       const associated = referenceIsUnique ? wrapperOwner(item.name) : null;
@@ -491,7 +583,9 @@
         tag: item.tag,
         parentRef: item.parentRef,
         position: item.position,
-        location: item.parentRef === null ? "Unparented / world-root" : "Unresolved parent / container",
+        worldPosition: item.transform ? worldPosition(item.transform) : null,
+        location: item.parentState === "root" ? "Unparented / world-root" : "Unresolved parent / container",
+        parentState: item.parentState,
         quantity: null,
         condition: null,
         ammo: null,
@@ -556,6 +650,14 @@
         } else if (candidates.length > 1) {
           itemRecord.warnings.push("Parent reference occurs in more than one vehicle prefab map; vehicle association is withheld.");
         }
+      }
+      const slot = knownSlots[item.parentRef];
+      const needsZeroOffset = item.parentRef === "6374689825314962276" || item.parentRef === "9124196666788711796";
+      if (referenceIsUnique && slot && (!needsZeroOffset || ["x", "y", "z"].every(axis => item.position?.[axis] === 0))) {
+        itemRecord.location = `User-identified ${slot}${parentCounts.get(item.parentRef) === 1 ? "" : " (multiple children)"}`;
+      } else {
+        const container = referenceIsUnique && identifiedContainer(item);
+        if (container) itemRecord.location = `${container} (saved parent link)`;
       }
 
       if (wheelMatches) {
@@ -686,6 +788,11 @@
         if (item.attachedTo?.startsWith(`${vehicle.name} · `) && !vehicle.parts.includes(item)) vehicle.parts.push(item);
       }
     }
+    const identifiedSlots = Object.entries(knownSlots).map(([ref, label]) => ({
+      ref, label,
+      items: items.filter(item => item.parentRef === ref && item.location.startsWith("User-identified "))
+        .map(item => ({ id: item.id, name: item.name }))
+    }));
     if (!fields.length && !readOnlyFields.length) throw new Error("No supported Apocalypter fields found. Open SaveGameN.es3 or SaveSettings.es3.");
     const sectionFields = [...fields, ...readOnlyFields];
     const presentSections = sections.filter(section =>
@@ -694,7 +801,7 @@
         fields.some(field => field.topOffConsumable || field.id === "global.Money") :
       sectionFields.some(field => field.section === section.id)
     );
-    return { fields, readOnlyFields, items, vehicles, sections: presentSections, kind: player || globals ? "Game save" : "Settings", text };
+    return { fields, readOnlyFields, items, vehicles, playerPosition, identifiedSlots, sections: presentSections, kind: player || globals ? "Game save" : "Settings", text };
   }
 
   function serialize(text, changes) {
