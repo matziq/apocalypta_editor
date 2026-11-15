@@ -603,7 +603,7 @@ function renderVehicles() {
     select.append(option);
   }
   if (doc.vehicles.some(vehicle => vehicle.id === previousSelection)) select.value = previousSelection;
-  $("vehicle-actions").hidden = doc.vehicles.length === 0;
+  $("vehicle-actions").hidden = false;
   $("vehicles-note").textContent = doc.vehicles.length
     ? "Vehicle objects are joined to their saved records by matching ES3 references. Fuel uses the saved Liquid value and is capped by that vehicle's LiquidCapacity (shown in L per the game's player-facing units; the save itself stores no unit label). Only components linked by a saved parent reference to a vehicle's engine, radiator, or exhaust mount are attributed to that vehicle. No separate vehicle-body Condition field was found."
     : "This save contains no newGOArray_Cars list.";
@@ -615,6 +615,7 @@ function renderVehicles() {
     cell.textContent = "No saved vehicle records were found.";
     row.append(cell);
     rows.append(row);
+    updateVehicleActions();
     return;
   }
   for (const vehicle of doc.vehicles) {
@@ -664,7 +665,8 @@ function updateVehicleActions() {
   const fields = vehicleActionFields(selectedVehicle());
   $("repair-vehicle").disabled = saving || !fields.some(field => field.id.endsWith(":Condition"));
   $("topoff-vehicle").disabled = saving || !fields.some(field => field.id.endsWith(":fuel") || field.id.endsWith(":Liquid"));
-  $("all-vehicles").disabled = saving || !doc?.vehicles.some(vehicle => vehicle.fieldIds.length);
+  $("all-vehicles").disabled = saving || !(doc?.vehicles.some(vehicle => vehicle.fieldIds.length) ||
+    doc?.fields.some(field => field.topOffConsumable || field.id === "global.Money"));
 }
 
 function stageVehicleAction(action) {
@@ -872,7 +874,7 @@ $("maximize-player").addEventListener("click", () => {
   refresh();
   const result = ApocalypterVehicleActions.maximize(doc.fields, readDraft, writeDraft, ApocalypterSave.validate);
   refresh();
-  $("player-action-status").textContent = `Maximize all staged ${result.staged} values: health, armor and supplies to 100; Nuts to 1,000,000; Hunger, Thirst, Fatigue and Radiation to 0. Read-only values were untouched.${result.skipped.length ? ` Could not set: ${result.skipped.join(", ")} (invalid draft or unsupported target).` : ""}`;
+  $("player-action-status").textContent = `Maximize all staged ${result.staged} values: health and supplies to 100; Nuts to 900,000; Hunger, Thirst, Fatigue and Radiation to 0. Armor, plates and read-only values were untouched.${result.skipped.length ? ` Could not set: ${result.skipped.join(", ")} (invalid draft or unsupported target).` : ""}`;
   requestAutosave();
 });
 $("maximize-items").addEventListener("click", () => {
@@ -887,8 +889,9 @@ $("all-vehicles").addEventListener("click", () => {
   if (!doc || saving) return;
   refresh();
   const result = ApocalypterVehicleActions.all(doc.vehicles, doc.fields, readDraft, writeDraft, ApocalypterSave.validate);
+  const consumables = ApocalypterVehicleActions.topOffConsumables(doc.fields, readDraft, writeDraft, ApocalypterSave.validate);
   refresh();
-  $("vehicle-action-status").textContent = `All vehicles: staged ${result.staged} verified repair and liquid values. ${result.missingRepair} vehicles had no verified repair target; ${result.missingFuel} had no verified fuel tank. ${result.skippedInvalid} invalid target drafts were left unchanged. Unrelated and read-only values were untouched.`;
+  $("vehicle-action-status").textContent = `Staged ${result.staged} vehicle repair and liquid values and ${consumables.staged} verified consumable/Nuts values. Consumables target 999; Nuts target 900,000. ${result.missingRepair} vehicles had no verified repair target; ${result.missingFuel} had no verified fuel tank. ${result.skippedInvalid + consumables.skippedInvalid} invalid target drafts were left unchanged. Armor, plates, unknown counters and read-only values were untouched.`;
   requestAutosave();
 });
 async function saveDocument(automatic = false) {
@@ -1006,9 +1009,9 @@ for (const [id, text] of [
   ["autosave", "Consent to overwrite the exact native-opened file after each committed valid change, without a separate prompt. Your native backup limit applies; 0 means no recovery copy. Invalid drafts or backup cleanup errors pause saving; errors stop automatic retries. Turning it off keeps pending drafts."],
   ["backup-limit", "Persistent native limit per original save, default 3. Apply removes excess backups made in this editor's exact timestamp/GUID format, preserving the verified recovery point. 0 disables automatic backups and removes eligible existing copies; damaged or overwritten saves then have no automatic recovery. Other files use the limit on their next open/save. Downloaded/unrelated files and links are never pruned."],
   ["editable-only", "Shows only item instances with at least one currently editable field. Combines with text search; hidden items and their drafts are not deleted."],
-  ["maximize-player", "Stages health, armor and supplies to 100, Nuts to 1,000,000, and Hunger, Thirst, Fatigue and Radiation to 0. Values above these requested targets can be lowered. Read-only fields and invalid target drafts are skipped."],
+  ["maximize-player", "Stages health and supplies to 100, Nuts to 900,000, and Hunger, Thirst, Fatigue and Radiation to 0. Armor and plates are not changed. Values above these targets can be lowered. Read-only fields and invalid target drafts are skipped."],
   ["maximize-items", "Stages verified conditions and liquids to their maximum, verified ammo and bandages to 100, repair kits to 999, and weapon-type loaded ammo to 100. These requested counts are not verified game maxima and can lower higher values or exceed normal capacities. Unverified counters, invalid drafts and read-only values are skipped."],
-  ["all-vehicles", "Stages verified component repairs and fuel, engine-oil and radiator top-offs across all vehicles. Unknown parts, storage associations and invalid target drafts are skipped."],
+  ["all-vehicles", "Stages verified vehicle repairs and liquid fills, verified consumable and ammunition counts to 999, and Nuts to 900,000. Counts can exceed normal game limits or lower higher values. Armor, plates, unknown counters and invalid drafts are untouched."],
   ["repair-vehicle", "Stages this selected vehicle's reference-matched component Condition values to 100%. It does not repair unlinked or stored spare parts."],
   ["topoff-vehicle", "Stages this selected vehicle's fuel and verified mounted engine and radiator liquids to their capacities. Missing/invalid mappings and loose cargo are skipped."]
 ]) {

@@ -226,6 +226,25 @@ test("joins vehicle fuel and mounted component condition through exact saved ref
     ["radiator_small(Clone)48", "Poloska(Clone)1 · Radiator", 47.5]
   ]);
 });
+
+test("trailer vehicle liquid is never classified as fuel, regardless of name casing", () => {
+  for (const name of ["Trailer_Big(Clone)407", "small_trailer(Clone)1"]) {
+    const root = {
+      Player: pm({ Health: { __type: "float", value: 100 } }),
+      newGOArray_Cars: pm(null, [gameObject(name, 200, 2000)]),
+      [name]: itemRecord(name, 200, { Liquid: { __type: "float", value: 5 }, LiquidCapacity: { __type: "float", value: 20 } })
+    };
+    const text = JSON.stringify(root), doc = inspect(text), trailer = doc.vehicles[0];
+    assert.equal(trailer.fuel, null);
+    assert.equal(trailer.fieldIds.some(id => id.endsWith(":fuel")), false);
+    assert.match(trailer.warnings.join(" "), /Trailer liquid fields are not identified as fuel/);
+    const updates = {};
+    require("../vehicle-actions.js").stage(trailer, doc.fields, "topoff",
+      field => ({ value: field.value, invalid: false }), (field, value) => { updates[field.id] = value; }, require("../save-format.js").validate);
+    assert.equal(Object.keys(updates).some(id => id.endsWith(":fuel")), false);
+    assert.equal(serialize(text, {}), text);
+  }
+});
 test("serializes only selected quantity, condition, fuel, and type-ammo tokens", () => {
   const text = domainSave();
   const doc = inspect(text);

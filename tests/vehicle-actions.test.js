@@ -75,6 +75,17 @@ test("all-vehicle batch skips missing mappings and invalid targets without touch
   assert.deepEqual(result, { staged: 2, skippedInvalid: 1, missingRepair: 1, missingFuel: 2 });
   assert.equal(state.drafts.get("Player.Health").value, "not valid");
 });
+test("trailer fuel fields are ignored even if supplied to a vehicle action", () => {
+  const trailer = { name: "Trailer_Big(Clone)407", fieldIds: ["trailer:fuel"] };
+  const fields = [{ id: "trailer:fuel", max: 20 }];
+  const updates = [];
+  const read = () => ({ value: 5, invalid: false });
+  const write = (field, value) => updates.push([field.id, value]);
+  assert.deepEqual(Actions.stage(trailer, fields, "topoff", read, write, () => {}), { staged: 0, skippedInvalid: 0 });
+  assert.deepEqual(Actions.all([trailer], fields, read, write, () => {}),
+    { staged: 0, skippedInvalid: 0, missingRepair: 1, missingFuel: 0 });
+  assert.deepEqual(updates, []);
+});
 test("item maximization applies requested counts, skips invalid drafts and deduplicates targets", () => {
   const fields = [
     { id: "part:Condition", max: 100 }, { id: "can:Liquid", max: 5 }, { id: "part:Quantity", max: 2147483647 },
@@ -90,4 +101,20 @@ test("item maximization applies requested counts, skips invalid drafts and dedup
   const result = Actions.maximizeItems(items, fields, field => drafts.get(field.id), (field, value) => updates.push([field.id, value]), () => {});
   assert.deepEqual(updates, [["can:Liquid", 5], ["weaponsAmmoInGun.ammoakms", 100], ["other:Condition", 100]]);
   assert.deepEqual(result, { staged: 3, skippedUnverified: 1, skippedInvalid: 1, readOnly: 1 });
+});
+
+test("consumable top-off skips invalid drafts and unrelated armor or capacity fields", () => {
+  const fields = [
+    { id: "Ammo.armor" }, { id: "Ammo.armorPlates" }, { id: "Ammo.ammo_9mm_capacity" },
+    { id: "Ammo.ammo_9mm", topOffConsumable: true },
+    { id: "item:aid:Quantity", topOffConsumable: true },
+    { id: "item:unknown:Quantity" }, { id: "global.Money" }
+  ];
+  const drafts = new Map(fields.map(field => [field.id, { value: 2, invalid: false }]));
+  drafts.get("item:aid:Quantity").invalid = true;
+  const updates = [];
+  const result = Actions.topOffConsumables(fields, field => drafts.get(field.id),
+    (field, value) => updates.push([field.id, value]), () => {});
+  assert.deepEqual(updates, [["Ammo.ammo_9mm", 999], ["global.Money", 900000]]);
+  assert.deepEqual(result, { staged: 2, skippedInvalid: 1 });
 });

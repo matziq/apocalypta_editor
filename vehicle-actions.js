@@ -9,6 +9,7 @@
     let skippedInvalid = 0;
     for (const id of new Set(vehicle?.fieldIds || [])) {
       if (!suffixes.some(suffix => id.endsWith(suffix))) continue;
+      if (action === "topoff" && id.endsWith(":fuel") && /trailer/i.test(vehicle?.name || "")) continue;
       const field = fieldById.get(id);
       if (!field) continue;
       const current = readValue(field);
@@ -28,7 +29,8 @@
     const result = { staged: 0, skippedInvalid: 0, missingRepair: 0, missingFuel: 0 };
     for (const vehicle of vehicles) {
       for (const [action, suffix, missing] of [["repair", ":Condition", "missingRepair"], ["topoff", ":fuel", "missingFuel"]]) {
-        if (!vehicle.fieldIds.some(id => id.endsWith(suffix))) result[missing]++;
+        if (!(action === "topoff" && /trailer/i.test(vehicle.name || "")) &&
+            !vehicle.fieldIds.some(id => id.endsWith(suffix))) result[missing]++;
         const next = stage(vehicle, fields, action, readValue, writeValue, validate);
         result.staged += next.staged;
         result.skippedInvalid += next.skippedInvalid;
@@ -39,8 +41,8 @@
 
   function maximize(fields, readValue, writeValue, validate) {
     const result = { staged: 0, skipped: [] };
-    for (const field of fields.filter(field => field.section === "player")) {
-      const target = field.id === "global.Money" ? 1000000 :
+    for (const field of fields.filter(field => field.section === "player" && field.id !== "Ammo.armor")) {
+      const target = field.id === "global.Money" ? 900000 :
         /^global\.(Hunger|Thirst|Fatigue|Radiation)$/.test(field.id) ? 0 : 100;
       if (readValue(field).invalid) { result.skipped.push(field.label); continue; }
       try { validate(field, target); }
@@ -49,6 +51,20 @@
         writeValue(field, target);
         result.staged++;
       }
+    }
+    return result;
+  }
+
+  function topOffConsumables(fields, readValue, writeValue, validate) {
+    const result = { staged: 0, skippedInvalid: 0 };
+    for (const field of fields.filter(field => field.topOffConsumable || field.id === "global.Money")) {
+      const target = field.id === "global.Money" ? 900000 : 999;
+      const current = readValue(field);
+      if (current.invalid) { result.skippedInvalid++; continue; }
+      if (Number(current.value) === target) continue;
+      validate(field, target);
+      writeValue(field, target);
+      result.staged++;
     }
     return result;
   }
@@ -72,7 +88,7 @@
     return result;
   }
 
-  const api = { stage, all, maximize, maximizeItems };
+  const api = { stage, all, maximize, maximizeItems, topOffConsumables };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ApocalypterVehicleActions = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

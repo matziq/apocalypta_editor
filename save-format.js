@@ -105,6 +105,15 @@
     "3733066396143753576": { name: "ammo_box_9mm", key: "ammo", target: 100 },
     "6082136355384846395": { name: "ammo_box_big_556mm", key: "ammo", target: 100 }
   };
+  const topOffConsumablePrefabs = {
+    ...bulkItemPrefabs,
+    "3766863323530176910": { name: "ammo_arrow", key: "ammo" },
+    "3955095449936337101": { name: "first_aid_1", key: "Quantity" },
+    "2856772050428381491": { name: "weed_bag", key: "Quantity" },
+    "7947724335221001397": { name: "cigarette_bactrian", key: "Quantity" },
+    "6706846953073870613": { name: "cigar", key: "Quantity" },
+    "4398581480533230246": { name: "sanity_pills", key: "Quantity" }
+  };
   const switchHelp = {
     peacefulMode: "True enables the game's peaceful-mode setting. The exact affected enemy behaviors have not been independently verified.",
     disableThirstHunger: "True disables the game's thirst/hunger system; false enables it.",
@@ -125,7 +134,7 @@
   function fieldHelp(field) {
     let effect = switchHelp[field.id];
     if (!effect && field.id === "Player.Health") effect = "Player Health scalar. Higher values mean more health; 100 is the editor's healthy endpoint. The separate global.PlayerHealth copy is not changed.";
-    if (!effect && field.id === "Ammo.armor") effect = "Saved armor amount. Higher means more armor; 100 is the editor's supported maximum. This does not grant the separate body-armor flag.";
+    if (!effect && field.id === "Ammo.armor") effect = "Saved armor amount. Bulk actions leave it unchanged; the game may reset armor without plates. Editing this value does not grant plates or the separate body-armor flag.";
     if (!effect && field.id === "global.Money") effect = "Nuts currency shown in the HUD and used for purchases. The 1,000,000 maximum is an editor safety limit, not a verified game maximum; future in-game earnings can still increase the amount.";
     if (!effect && field.id.startsWith("Ammo.ammo_")) effect = field.id.endsWith("_capacity")
       ? "Saved player ammunition supply capacity for this type. Increasing it changes only this counter, not the current amount."
@@ -296,7 +305,8 @@
     if (ammo && at(ammo, "__type")?.value === wrapper) {
       add("Ammo.armor", "Armor", "Supplies", at(ammo, "value", "objs", "armor"), "float", 0, 100, "player");
       for (const name of ammoNames) {
-        add(`Ammo.${name}`, name.replace(/^ammo_/, "").replaceAll("_", " "), "Supplies", at(ammo, "value", "objs", name), "int", 0, 2147483647, "player");
+        const field = add(`Ammo.${name}`, name.replace(/^ammo_/, "").replaceAll("_", " "), "Supplies", at(ammo, "value", "objs", name), "int", 0, 2147483647, "player");
+        if (field && !name.endsWith("_capacity")) field.topOffConsumable = true;
       }
     }
     const globals = at(tree, "global");
@@ -310,7 +320,7 @@
       const supportedMoney = at(money, "__type")?.value === "int" && moneyValue?.kind === "number" &&
         !(money?.implicit && at(money, "value"));
       if (supportedMoney) add("global.Money", "Nuts", "Currency", money, "int", 0, 1000000, "player",
-        "Saved global Money. The 1,000,000 editor limit is conservative, not a verified game maximum; Maximize all sets it to 1,000,000.");
+        "Saved global Money. The 1,000,000 editor limit is conservative, not a verified game maximum; bulk actions set it to 900,000.");
       for (const [name, reason] of [
         ...(!supportedMoney ? [["Money", "This Money record is not a uniquely represented integer; preserved unchanged."]] : []),
         ["Sanity", "The active gameplay FSM clamps 0 to 100, but inspected saves also contain negative values; behavior with insanity disabled has not been verified."],
@@ -436,7 +446,9 @@
         }
         const liquid = numericValue(at(associated.data, "Liquid"), "float", car.name);
         const capacity = numericValue(at(associated.data, "LiquidCapacity"), "float", car.name);
-        if (liquid.value !== undefined && capacity.value !== undefined && capacity.value > 0 && liquid.value >= 0 && liquid.value <= capacity.value) {
+        if (/trailer/i.test(car.name)) {
+          vehicle.warnings.push("Trailer liquid fields are not identified as fuel and are not changed by fuel top-off.");
+        } else if (liquid.value !== undefined && capacity.value !== undefined && capacity.value > 0 && liquid.value >= 0 && liquid.value <= capacity.value) {
           const id = `${vehicle.id}:fuel`;
           const field = add(id, `${car.name} fuel`, "Fuel tank (L)", liquid.node, "float", 0, capacity.value, "vehicles", "Saved Liquid amount; capacity comes from this vehicle's LiquidCapacity field.");
           if (field) {
@@ -460,6 +472,9 @@
       const bulkPrefab = Object.hasOwn(bulkItemPrefabs, prefabId) ? bulkItemPrefabs[prefabId] : null;
       const verifiedBulkPrefab = matched && bulkPrefab && readableName(item.name) === bulkPrefab.name &&
         at(associated.owner, "es3Prefab", "prefabId")?.value === prefabId ? bulkPrefab : null;
+      const topOffPrefab = Object.hasOwn(topOffConsumablePrefabs, prefabId) ? topOffConsumablePrefabs[prefabId] : null;
+      const verifiedTopOffPrefab = matched && topOffPrefab && readableName(item.name) === topOffPrefab.name &&
+        at(associated.owner, "es3Prefab", "prefabId")?.value === prefabId ? topOffPrefab : null;
       const wheel = Object.hasOwn(wheelPrefabs, prefabId) ? wheelPrefabs[prefabId] : null;
       const wheelRecord = at(tree, item.name);
       const wheelMatches = referenceIsUnique && nameCounts.get(item.name) === 1 && wheel &&
@@ -498,6 +513,7 @@
             const field = add(id, `${item.name} quantity`, "Existing item quantities", quantity.node, "int", 1, 2147483647, "items", "Changes this existing stack only, regardless of its world/container location; minimum 1 prevents deleting the object.");
             if (field) {
               if (verifiedBulkPrefab?.key === "Quantity") field.bulkTarget = verifiedBulkPrefab.target;
+              if (verifiedTopOffPrefab?.key === "Quantity") field.topOffConsumable = true;
               itemRecord.quantity = field.value;
               itemRecord.fieldIds.push(field.id);
             }
@@ -571,6 +587,7 @@
         if (ammoCount.value !== undefined && Number.isInteger(ammoCount.value) && ammoCount.value >= 0 && ammoCount.value <= 2147483647) {
           const field = add(`${itemRecord.id}:ammo`, `${item.name} ammo count`, "Existing item ammunition", ammoCount.node, "int", 0, 2147483647, "items", "The ammo count stored on this exact item, not the player supply or a weapon-type counter.");
           if (verifiedBulkPrefab?.key === "ammo") field.bulkTarget = verifiedBulkPrefab.target;
+          if (verifiedTopOffPrefab?.key === "ammo") field.topOffConsumable = true;
           itemRecord.ammo = field.value;
           itemRecord.fieldIds.push(field.id);
         } else if (at(associated.data, "ammo")) itemRecord.warnings.push(ammoCount.error || "Item ammo must be a nonnegative signed 32-bit integer; shown read-only.");
@@ -634,7 +651,10 @@
           "This existing weaponsAmmoInGun counter is keyed by weapon type, not linked to an individual weapon instance."
         );
         if (field) {
-          if (Object.hasOwn(weaponAmmoLabels, name)) field.bulkTarget = 100;
+          if (Object.hasOwn(weaponAmmoLabels, name)) {
+            field.bulkTarget = 100;
+            field.topOffConsumable = true;
+          }
           weaponFields.set(name, field);
         }
       }
@@ -656,7 +676,8 @@
     const sectionFields = [...fields, ...readOnlyFields];
     const presentSections = sections.filter(section =>
       section.id === "items" ? items.length > 0 || sectionFields.some(field => field.section === "items") :
-      section.id === "vehicles" ? vehicles.length > 0 || sectionFields.some(field => field.section === "vehicles") :
+      section.id === "vehicles" ? vehicles.length > 0 || sectionFields.some(field => field.section === "vehicles") ||
+        fields.some(field => field.topOffConsumable || field.id === "global.Money") :
       sectionFields.some(field => field.section === section.id)
     );
     return { fields, readOnlyFields, items, vehicles, sections: presentSections, kind: player || globals ? "Game save" : "Settings", text };

@@ -460,8 +460,9 @@ test("player bulk action is one coherent autosave, sets exact values, and preser
   ui.elements.get("maximize-player").events.click();
   await ui.flushTimers();
   assert.equal(ui.fetches.length, 1);
-  assert.deepEqual(payload.changes, { "Player.Health": 100, "Ammo.armor": 100, "Ammo.ammo_9mm": 100, "global.Hunger": 0, "global.Thirst": 0, "global.Fatigue": 0, "global.Radiation": 0, "global.Money": 1000000 });
-  assert.equal(vm.runInContext("doc.fields.find(field => field.id === 'global.Money').value", ui.context), 1000000);
+  assert.deepEqual(payload.changes, { "Player.Health": 100, "Ammo.ammo_9mm": 100, "global.Hunger": 0, "global.Thirst": 0, "global.Fatigue": 0, "global.Radiation": 0, "global.Money": 900000 });
+  assert.equal(vm.runInContext("doc.fields.find(field => field.id === 'global.Money').value", ui.context), 900000);
+  assert.equal(vm.runInContext("doc.fields.find(field => field.id === 'Ammo.armor').value", ui.context), 5);
   assert.equal(vm.runInContext("changes.size", ui.context), 0);
 });
 
@@ -476,10 +477,10 @@ test("Nuts can be edited and saved with the requested bulk target", async () => 
   assert.equal(draft(ui, "global.Money").value, "42");
   await commitInput(ui, "global.Money", 500);
   ui.elements.get("maximize-player").events.click();
-  assert.equal(draft(ui, "global.Money").value, "1000000");
+  assert.equal(draft(ui, "global.Money").value, "900000");
   await ui.elements.get("save").events.click();
-  assert.equal(payload.changes["global.Money"], 1000000);
-  assert.equal(vm.runInContext("doc.fields.find(field => field.id === 'global.Money').value", ui.context), 1000000);
+  assert.equal(payload.changes["global.Money"], 900000);
+  assert.equal(vm.runInContext("doc.fields.find(field => field.id === 'global.Money').value", ui.context), 900000);
 });
 
 test("all-vehicle bulk action is one coherent autosave with exactly the selected-action targets", async () => {
@@ -538,6 +539,76 @@ test("vehicle batch fills attached engine and radiator but not loose coolant, in
   assert.equal(payload.changes["item:rad-0:3:Liquid"], 14);
   assert.equal(payload.changes["item:rad-1:4:Liquid"], undefined);
   assert.equal(vm.runInContext("doc.items[4].liquid.value", ui.context), 0.3);
+});
+
+test("Repair & Top Off batches verified consumables and Nuts while preserving armor and plates", async () => {
+  let payload, text;
+  const ui = app({ timers: true, fetchResponse: async (url, init) => {
+    payload = JSON.parse(init.body);
+    return saveReply(Save.serialize(text, payload.changes));
+  } });
+  seedWorldItems(ui, true);
+  const root = JSON.parse(ui.context.worldText);
+  root.Ammo = pm({ armor: scalar(0), armorPlates: { __type: "int", value: 0 },
+    ammo_9mm: { __type: "int", value: 3 }, ammo_9mm_capacity: { __type: "int", value: 40 } });
+  root.global = pm({ Money: { __type: "int", value: 50 } });
+  root.weaponsAmmoInGun = pm({ ammoakms: { __type: "int", value: 20 }, ammoUnknown: { __type: "int", value: 12 } });
+  const entries = [
+    ["bandage_1", "688495819279421776", "Quantity"],
+    ["first_aid_1", "3955095449936337101", "Quantity"],
+    ["Repairbox_Medium", "7600464120049698740", "Quantity"],
+    ["sanity_pills", "4398581480533230246", "Quantity"],
+    ["weed_bag", "2856772050428381491", "Quantity"],
+    ["ammo_box_9mm", "3733066396143753576", "ammo"],
+    ["ammo_arrow", "3766863323530176910", "ammo"],
+    ["cigarette_bactrian", "7947724335221001397", "Quantity"],
+    ["cigar", "6706846953073870613", "Quantity"],
+    ["mystery_food", "unknown", "Quantity"],
+    ["first_aid_1", "3955095449936337101", "Quantity"]
+  ];
+  for (const [index, [name, id, key]] of entries.entries()) {
+    const savedName = `${name}(Clone)${index + 100}`, ref = `consumable-${index}`;
+    const prefab = { prefabId: id };
+    root.newGOArray_Items.value.array.push({ name: savedName, _ES3Ref: ref, es3Prefab: prefab,
+      components: [{ __type: "Transform", parent: null }] });
+    root[savedName] = pm({ owner: { _ES3Ref: ref, es3Prefab: index === 10 ? { prefabId: "wrong" } : prefab },
+      [key]: { __type: "int", value: 4 } });
+  }
+  text = JSON.stringify(root);
+  nativeFixture(ui, text);
+  ui.elements.get("autosave").checked = true; ui.elements.get("autosave").events.change();
+  ui.elements.get("all-vehicles").events.click();
+  await ui.flushTimers();
+  assert.equal(ui.fetches.length, 1);
+  assert.equal(payload.changes["Ammo.ammo_9mm"], 999);
+  assert.equal(payload.changes["weaponsAmmoInGun.ammoakms"], 999);
+  assert.equal(payload.changes["global.Money"], 900000);
+  for (let index = 0; index < 9; index++) {
+    const key = index === 5 || index === 6 ? "ammo" : "Quantity";
+    assert.equal(payload.changes[`item:consumable-${index}:${index + 3}:${key}`], 999);
+  }
+  for (const id of ["Ammo.armor", "Ammo.armorPlates", "Ammo.ammo_9mm_capacity",
+    "weaponsAmmoInGun.ammoUnknown", "item:consumable-9:12:Quantity", "item:consumable-10:13:Quantity"]) {
+    assert.equal(payload.changes[id], undefined, id);
+  }
+  const saved = JSON.parse(Save.serialize(text, payload.changes));
+  assert.equal(saved.Ammo.value.objs.armor.value, 0);
+  assert.equal(saved.Ammo.value.objs.armorPlates.value, 0);
+  assert.match(ui.elements.get("vehicle-action-status").textContent, /Armor, plates, unknown counters/);
+});
+
+test("Repair & Top Off remains available for supplies when a save has no vehicles", () => {
+  const text = JSON.stringify({ Ammo: pm({ ammo_9mm: { __type: "int", value: 5 }, armor: scalar(0) }),
+    global: pm({ Money: { __type: "int", value: 42 } }) });
+  const ui = app();
+  nativeFixture(ui, text);
+  assert.equal(vm.runInContext("doc.sections.some(section => section.id === 'vehicles')", ui.context), true);
+  assert.equal(ui.elements.get("vehicle-actions").hidden, false);
+  assert.equal(ui.elements.get("all-vehicles").disabled, false);
+  ui.elements.get("all-vehicles").events.click();
+  assert.equal(draft(ui, "Ammo.ammo_9mm").value, "999");
+  assert.equal(draft(ui, "global.Money").value, "900000");
+  assert.equal(draft(ui, "Ammo.armor").value, "0");
 });
 
 test("editable-only reports zero matches rather than no instances for an all-read-only list", () => {

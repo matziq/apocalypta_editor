@@ -187,6 +187,40 @@ test("native numeric spinners stay stationary near the viewport bottom while aut
   } finally { await browser.close(); }
 });
 
+test("Repair & Top Off autosaves verified supplies without changing unplated armor", browserOptions, async () => {
+  const { origin, fixture } = await syntheticBridge();
+  const pm = objs => ({ __type: "ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass", value: { objs } });
+  const name = "first_aid_1(Clone)1", ref = "aid-1", prefab = { prefabId: "3955095449936337101" };
+  const target = path.join(fixture, "SaveGame1.es3");
+  fs.writeFileSync(target, JSON.stringify({
+    Ammo: pm({ armor: { __type: "float", value: 0 }, armorPlates: { __type: "int", value: 0 },
+      ammo_9mm: { __type: "int", value: 4 }, ammo_9mm_capacity: { __type: "int", value: 40 } }),
+    global: pm({ Money: { __type: "int", value: 42 } }),
+    newGOArray_Items: { value: { array: [{ name, _ES3Ref: ref, es3Prefab: prefab }] } },
+    [name]: pm({ owner: { _ES3Ref: ref, es3Prefab: prefab }, Quantity: { __type: "int", value: 3 } })
+  }));
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const errors = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.goto(origin);
+    await page.waitForFunction(() => !!doc && !openingNative);
+    await page.locator("#autosave").check();
+    await page.locator("#tab-vehicles").click();
+    await page.locator("#all-vehicles").click();
+    await page.waitForFunction(() => !saving && doc.fields.find(field => field.id === "global.Money").value === 900000);
+    const saved = JSON.parse(fs.readFileSync(target, "utf8"));
+    assert.equal(saved.Ammo.value.objs.armor.value, 0);
+    assert.equal(saved.Ammo.value.objs.armorPlates.value, 0);
+    assert.equal(saved.Ammo.value.objs.ammo_9mm.value, 999);
+    assert.equal(saved.Ammo.value.objs.ammo_9mm_capacity.value, 40);
+    assert.equal(saved.global.value.objs.Money.value, 900000);
+    assert.equal(saved[name].value.objs.Quantity.value, 999);
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});
+
 test("long item lists expand in place, keep inline drafts through autosave, and maximize hidden verified targets", browserOptions, async () => {
   const { origin, fixture } = await syntheticBridge();
   const pm = objs => ({ __type: "ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass", value: { objs } });
