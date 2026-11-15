@@ -25,6 +25,97 @@ async function launchBrowser() {
   });
 }
 
+test("text size reflows controls, help and tables, persists across native origins and never saves game data", browserOptions, async () => {
+  const { origin, fixture, token } = await syntheticBridge();
+  const pm = objs => ({ __type: "ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass", value: { objs } });
+  const name = "bandage_1(Clone)1", prefab = { prefabId: "688495819279421776" };
+  const target = path.join(fixture, "SaveGame1.es3");
+  const original = JSON.stringify({
+    Player: pm({ Health: { __type: "float", value: 50 } }),
+    newGOArray_Items: { value: { array: [{ name, _ES3Ref: "item", es3Prefab: prefab }] } },
+    [name]: pm({ owner: { _ES3Ref: "item", es3Prefab: prefab }, Quantity: { __type: "int", value: 4 } })
+  });
+  fs.writeFileSync(target, original);
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const errors = [], writes = [];
+    page.on("pageerror", error => errors.push(error.message));
+    page.on("request", request => { if (request.url().endsWith("/api/save")) writes.push(request.url()); });
+    await page.goto(origin);
+    await page.waitForFunction(() => !!doc && !openingNative && !fontBusy);
+    while ((await page.locator("#font-size").innerText()) !== "100%") {
+      const current = Number((await page.locator("#font-size").innerText()).replace("%", ""));
+      await page.locator(current < 100 ? "#font-increase" : "#font-decrease").click();
+      await page.waitForFunction(() => !fontBusy);
+    }
+    await page.locator("#autosave").check();
+    const healthId = await page.evaluate(() => inputs.get("Player.Health").id);
+    const health = page.locator(`#${healthId}`);
+    await health.fill("49");
+    await page.locator("#font-decrease").click();
+    await page.waitForFunction(() => !fontBusy);
+    assert.equal(await health.inputValue(), "49");
+    assert.equal(await health.evaluate(element => element === document.activeElement), true);
+    assert.equal(writes.length, 0);
+    await health.fill("50");
+    await page.locator("#tab-items").click();
+    await page.locator("#item-rows .item-action").first().click();
+    const measurements = {};
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 800 }]) {
+      await page.setViewportSize(viewport);
+      measurements[viewport.width] = {};
+      for (const size of [80, 100, 140]) {
+        while (Number((await page.locator("#font-size").innerText()).replace("%", "")) !== size) {
+          const current = Number((await page.locator("#font-size").innerText()).replace("%", ""));
+          await page.locator(current < size ? "#font-increase" : "#font-decrease").click();
+          await page.waitForFunction(() => !fontBusy);
+        }
+        measurements[viewport.width][size] = await page.evaluate(() => {
+          const size = selector => parseFloat(getComputedStyle(document.querySelector(selector)).fontSize);
+          const table = document.querySelector("#item-rows").closest("table");
+          return { body: size("body"), header: size("h1"), button: size("#font-increase"), table: size("table"),
+            cell: size("td code"), inspector: size("#item-editor .field"), help: size("#floating-help"),
+            input: size("#item-filter"), select: size("#palette-select"),
+            placeholder: parseFloat(getComputedStyle(document.querySelector("#item-filter"), "::placeholder").fontSize),
+            width: table.getBoundingClientRect().width, panning: table.parentElement.scrollWidth - table.parentElement.clientWidth,
+            height: document.documentElement.scrollHeight, headerPosition: getComputedStyle(document.querySelector("header")).position,
+            scrollWidth: document.documentElement.scrollWidth };
+        });
+        if (viewport.width === 1440 && [80, 140].includes(size) && process.env.APOCALYPTER_FONT_SNAPSHOT_DIR) {
+          await page.evaluate(() => window.scrollTo(0, 0));
+          await page.screenshot({ path: path.join(process.env.APOCALYPTER_FONT_SNAPSHOT_DIR, `text-${size}.png`) });
+        }
+        assert.ok(measurements[viewport.width][size].scrollWidth <= viewport.width);
+      }
+      for (const property of ["body", "header", "button", "table", "cell", "inspector", "help", "input", "select", "placeholder"]) {
+        assert.ok(measurements[viewport.width][80][property] < measurements[viewport.width][100][property], `${property} at 80%`);
+        assert.ok(measurements[viewport.width][100][property] < measurements[viewport.width][140][property], `${property} at 140%`);
+      }
+      if (viewport.width === 390) {
+        assert.ok(measurements[viewport.width][80].panning < measurements[viewport.width][100].panning);
+        assert.ok(measurements[viewport.width][80].height < measurements[viewport.width][100].height);
+      }
+      assert.equal(measurements[viewport.width][140].headerPosition, "static");
+    }
+    console.log("Text sizing measurements:", JSON.stringify(measurements));
+    assert.equal(writes.length, 0);
+    assert.equal(fs.readFileSync(target, "utf8"), original);
+    const other = await browser.newPage();
+    await other.goto(process.env.APOCALYPTER_BROWSER_TEST_URL_ALT || origin);
+    await other.waitForFunction(() => !!doc && !openingNative && !fontBusy);
+    assert.equal(await other.locator("#font-size").innerText(), "140%");
+    await other.close();
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+    const reset = await fetch(origin + "/api/font-size", { method: "POST",
+      headers: { Origin: origin, "X-Editor-Token": token, "Content-Type": "application/json" },
+      body: JSON.stringify({ fontSize: 100 }) });
+    assert.equal(reset.ok, true);
+  }
+});
+
 test("saved coordinate plot and slot list are usable on desktop and mobile", browserOptions, async () => {
   const { origin, fixture } = await syntheticBridge();
   const pm = objs => ({ __type: "ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass", value: { objs } });
@@ -233,7 +324,7 @@ test("Repair & Top Off autosaves verified supplies without changing unplated arm
   fs.writeFileSync(target, JSON.stringify({
     Ammo: pm({ armor: { __type: "float", value: 0 }, armorPlates: { __type: "int", value: 0 },
       ammo_9mm: { __type: "int", value: 4 }, ammo_9mm_capacity: { __type: "int", value: 40 },
-      ammo_20gauge_capacity: { __type: "int", value: 40 }, ammo_arrow_capacity: { __type: "int", value: 40 },
+      ammo_22caliber_capacity: { __type: "int", value: 40 }, ammo_20gauge_capacity: { __type: "int", value: 40 }, ammo_arrow_capacity: { __type: "int", value: 40 },
       ammo_battery_capacity: { __type: "int", value: 40 } }),
     global: pm({ Money: { __type: "int", value: 42 } }),
     newGOArray_Items: { value: { array: [{ name, _ES3Ref: ref, es3Prefab: prefab },
@@ -257,7 +348,7 @@ test("Repair & Top Off autosaves verified supplies without changing unplated arm
     assert.equal(saved.Ammo.value.objs.armor.value, 0);
     assert.equal(saved.Ammo.value.objs.armorPlates.value, 0);
     assert.equal(saved.Ammo.value.objs.ammo_9mm.value, 999);
-    for (const name of ["9mm", "20gauge", "arrow"]) assert.equal(saved.Ammo.value.objs[`ammo_${name}_capacity`].value, 999);
+    for (const name of ["22caliber", "9mm", "20gauge", "arrow"]) assert.equal(saved.Ammo.value.objs[`ammo_${name}_capacity`].value, 999);
     assert.equal(saved.Ammo.value.objs.ammo_battery_capacity.value, 40);
     assert.equal(saved.global.value.objs.Money.value, 900000);
     assert.equal(saved[name].value.objs.Quantity.value, 999);
@@ -355,7 +446,7 @@ test("bulk targets persist across native bridge origins and invalid settings nev
   fs.writeFileSync(target, JSON.stringify({
     Ammo: pm({ armor: { __type: "float", value: 0 }, armorPlates: { __type: "int", value: 0 },
       ammo_9mm: { __type: "int", value: 4 }, ammo_9mm_capacity: { __type: "int", value: 40 },
-      ammo_20gauge_capacity: { __type: "int", value: 40 }, ammo_arrow_capacity: { __type: "int", value: 40 } }),
+      ammo_22caliber_capacity: { __type: "int", value: 40 }, ammo_20gauge_capacity: { __type: "int", value: 40 }, ammo_arrow_capacity: { __type: "int", value: 40 } }),
     global: pm({ Money: { __type: "int", value: 42 } })
   }));
   const browser = await launchBrowser();
@@ -376,7 +467,7 @@ test("bulk targets persist across native bridge origins and invalid settings nev
     await page.locator("#autosave").uncheck();
     await page.locator("#maximize-player").click();
     assert.equal(await page.evaluate(() => changes.get("Ammo.ammo_9mm")), 999);
-    for (const name of ["9mm", "20gauge", "arrow"])
+    for (const name of ["22caliber", "9mm", "20gauge", "arrow"])
       assert.equal(await page.evaluate(name => changes.get(`Ammo.ammo_${name}_capacity`), name), 999);
     assert.equal(await page.evaluate(() => changes.has("Ammo.armor")), false);
     await page.locator("#reset").click();

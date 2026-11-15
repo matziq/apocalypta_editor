@@ -307,7 +307,7 @@
       add("Ammo.armor", "Armor", "Supplies", at(ammo, "value", "objs", "armor"), "float", 0, 100, "player");
       for (const name of ammoNames) {
         const field = add(`Ammo.${name}`, name.replace(/^ammo_/, "").replaceAll("_", " "), "Supplies", at(ammo, "value", "objs", name), "int", 0, 2147483647, "player");
-        if (field && (!name.endsWith("_capacity") || ["ammo_9mm_capacity", "ammo_20gauge_capacity", "ammo_arrow_capacity"].includes(name))) field.topOffConsumable = true;
+        if (field && (!name.endsWith("_capacity") || ["ammo_22caliber_capacity", "ammo_9mm_capacity", "ammo_20gauge_capacity", "ammo_arrow_capacity"].includes(name))) field.topOffConsumable = true;
       }
     }
     const globals = at(tree, "global");

@@ -88,6 +88,42 @@ function Write-BulkTargets {
     } finally { if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) } }
 }
 
+function ConvertTo-FontSize {
+    param($Value)
+    if (($Value -isnot [int] -and $Value -isnot [long]) -or $Value -lt 80 -or $Value -gt 140 -or $Value % 10 -ne 0) {
+        throw "Text size must be 80 to 140 in steps of 10."
+    }
+    return [int]$Value
+}
+
+function Read-FontSize {
+    param([string]$Path)
+    try { $file = Get-Item -LiteralPath $Path -Force -ErrorAction Stop }
+    catch [System.Management.Automation.ItemNotFoundException] { return 100 }
+    if ($file.Length -gt 4096 -or -not [Apocalypter.BackupFiles]::Fingerprint($file.FullName)) { throw "Text-size settings must be a small regular file, not a directory or link." }
+    $text = [IO.File]::ReadAllText($file.FullName)
+    if ($text -cnotmatch '\A\{"fontSize":(?:0|[1-9][0-9]*)\}\z') { throw "Text-size settings are malformed." }
+    return ConvertTo-FontSize (($text | ConvertFrom-Json).fontSize)
+}
+
+function Write-FontSize {
+    param([string]$Path, $Payload)
+    if ($null -eq $Payload -or @($Payload.PSObject.Properties.Name).Count -ne 1 -or $Payload.PSObject.Properties.Name -cne "fontSize") {
+        throw "Text-size settings require exactly fontSize."
+    }
+    $value = ConvertTo-FontSize $Payload.fontSize
+    $directory = [IO.Path]::GetDirectoryName($Path)
+    [void][IO.Directory]::CreateDirectory($directory)
+    $temporary = Join-Path $directory (".apocalypter-font-" + [Guid]::NewGuid().ToString("N") + ".tmp")
+    try {
+        Write-NewSaveFile $temporary ([Text.Encoding]::UTF8.GetBytes('{"fontSize":' + $value + '}'))
+        if ([IO.File]::Exists($Path)) {
+            if (-not [Apocalypter.BackupFiles]::Fingerprint($Path)) { throw "Text-size settings cannot replace a link." }
+            [IO.File]::Replace($temporary, $Path, [NullString]::Value)
+        } else { [IO.File]::Move($temporary, $Path) }
+    } finally { if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) } }
+}
+
 function Get-EditorBackups {
     param([string]$Path)
     $fullPath = [IO.Path]::GetFullPath($Path)

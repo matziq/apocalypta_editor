@@ -36,11 +36,12 @@ try {
   preferences = ApocalypterUi.load(localStorage, themeQuery.matches);
 } catch (error) {
   preferencesLoadError = error;
-  preferences = { theme: "system", palette: "wasteland", prefersDark: themeQuery.matches, autosave: false, editableOnly: false };
+  preferences = { theme: "system", palette: "wasteland", prefersDark: themeQuery.matches, autosave: false, editableOnly: false, fontSize: 100 };
   $("appearance-status").textContent = `Appearance preferences could not be loaded: ${error.message}. Default appearance is active; file opening is still available.`;
 }
 const pickerToken = document.querySelector('meta[name="save-picker-token"]')?.content || "";
 const nativeTargets = !!pickerToken && location.protocol === "http:" && location.hostname === "127.0.0.1";
+let fontBusy = nativeTargets;
 const targetKeys = ["ammo", "consumables", "nuts", "liquids"];
 let targetsReady = !nativeTargets;
 let targetsBusy = nativeTargets;
@@ -194,6 +195,55 @@ function updateAppearance() {
   $("palette-select").value = preferences.palette;
 }
 
+function updateFontSize() {
+  document.body.style.setProperty("--font-scale", String(preferences.fontSize / 100));
+  document.body.dataset.largeText = String(preferences.fontSize >= 120);
+  $("font-size").textContent = `${preferences.fontSize}%`;
+  $("font-decrease").disabled = fontBusy || preferences.fontSize <= 80;
+  $("font-increase").disabled = fontBusy || preferences.fontSize >= 140;
+}
+
+async function fontRequest(size) {
+  const response = await fetch("/api/font-size", {
+    method: "POST",
+    headers: { "X-Editor-Token": pickerToken, ...(size === undefined ? {} : { "Content-Type": "application/json" }) },
+    ...(size === undefined ? {} : { body: JSON.stringify({ fontSize: size }) })
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || `Text-size request failed (${response.status}).`);
+  return ApocalypterUi.checkedFontSize(result.fontSize);
+}
+
+async function loadFontSize() {
+  if (!nativeTargets) return;
+  try {
+    preferences.fontSize = await fontRequest();
+    $("font-status").textContent = "";
+  } catch (error) {
+    $("font-status").textContent = `Could not load text size: ${error.message}`;
+  } finally { fontBusy = false; updateFontSize(); }
+}
+
+async function changeFontSize(delta) {
+  if (fontBusy) return;
+  const previous = preferences.fontSize;
+  const next = ApocalypterUi.checkedFontSize(previous + delta);
+  fontBusy = true;
+  updateFontSize();
+  try {
+    if (nativeTargets) preferences.fontSize = await fontRequest(next);
+    else {
+      preferences.fontSize = next;
+      try { ApocalypterUi.save(localStorage, preferences); }
+      catch (error) { preferences.fontSize = previous; throw error; }
+    }
+    hideHelp();
+    $("font-status").textContent = "";
+  } catch (error) {
+    $("font-status").textContent = `Could not save text size: ${error.message}`;
+  } finally { fontBusy = false; updateFontSize(); }
+}
+
 function saveAppearance() {
   updateAppearance();
   try {
@@ -218,6 +268,12 @@ function setupPicker() {
 
 setupPicker();
 updateAppearance();
+updateFontSize();
+for (const id of ["font-decrease", "font-increase"]) {
+  $(id).addEventListener("pointerdown", event => event.preventDefault());
+}
+$("font-decrease").addEventListener("click", () => changeFontSize(-10));
+$("font-increase").addEventListener("click", () => changeFontSize(10));
 themeQuery.addEventListener("change", () => {
   preferences.prefersDark = themeQuery.matches;
   updateAppearance();
@@ -1019,6 +1075,7 @@ async function openNative(latest = false) {
 $("native-picker").addEventListener("click", () => openNative());
 window.addEventListener("DOMContentLoaded", () => {
   void loadTargets();
+  void loadFontSize();
   if (pickerToken && location.protocol === "http:" && location.hostname === "127.0.0.1") void openNative(true);
 });
 $("vehicle-select").addEventListener("change", updateVehicleActions);
@@ -1036,7 +1093,7 @@ $("maximize-player").addEventListener("click", () => {
   refresh();
   const result = ApocalypterVehicleActions.maximize(doc.fields, readDraft, writeDraft, ApocalypterSave.validate, targets);
   refresh();
-  $("player-action-status").textContent = `Maximize all staged ${result.staged} values: health to 100, ammo and 9mm/20gauge/arrow capacities to ${targets.ammo}, Nuts to ${targets.nuts}, and Hunger, Thirst, Fatigue and Radiation to 0. Armor, plates, other capacities and read-only values were untouched.${result.skipped.length ? ` Could not set: ${result.skipped.join(", ")} (invalid draft or unsupported target).` : ""}`;
+  $("player-action-status").textContent = `Maximize all staged ${result.staged} values: health to 100, ammo and 22caliber/9mm/20gauge/arrow capacities to ${targets.ammo}, Nuts to ${targets.nuts}, and Hunger, Thirst, Fatigue and Radiation to 0. Armor, plates, other capacities and read-only values were untouched.${result.skipped.length ? ` Could not set: ${result.skipped.join(", ")} (invalid draft or unsupported target).` : ""}`;
   requestAutosave();
 });
 $("maximize-items").addEventListener("click", () => {
@@ -1175,7 +1232,7 @@ for (const [id, text] of [
   ["autosave", "Consent to overwrite the exact native-opened file after each committed valid change, without a separate prompt. Your native backup limit applies; 0 means no recovery copy. Invalid drafts or backup cleanup errors pause saving; errors stop automatic retries. Turning it off keeps pending drafts."],
   ["backup-limit", "Persistent native limit per original save, default 3. Apply removes excess backups made in this editor's exact timestamp/GUID format, preserving the verified recovery point. 0 disables automatic backups and removes eligible existing copies; damaged or overwritten saves then have no automatic recovery. Other files use the limit on their next open/save. Downloaded/unrelated files and links are never pruned."],
   ["editable-only", "Shows only item instances with at least one currently editable field. Combines with text search; hidden items and their drafts are not deleted."],
-  ["maximize-player", "Stages health to 100, carried ammo and 9mm, 20gauge and arrow capacities to the ammo target, Nuts to its target, and Hunger, Thirst, Fatigue and Radiation to 0. Armor, plates and other capacities are not changed."],
+  ["maximize-player", "Stages health to 100, carried ammo and 22caliber, 9mm, 20gauge and arrow capacities to the ammo target, Nuts to its target, and Hunger, Thirst, Fatigue and Radiation to 0. Armor, plates and other capacities are not changed."],
   ["maximize-items", "Stages verified conditions to 100%, liquids to the applied percentage of capacity and verified ammo and consumable counts to their applied targets. Unknown counters and invalid drafts are skipped."],
   ["all-vehicles", "Stages verified vehicle repairs, liquids to the applied percentage of capacity, verified ammo and consumable counts to their applied targets, and Nuts to the applied target. Armor, plates and unknown counters are untouched."],
   ["repair-vehicle", "Stages this selected vehicle's reference-matched component Condition values to 100%. It does not repair unlinked or stored spare parts."],

@@ -53,9 +53,9 @@ function Test-PickerRequest {
         [string]$RequestedMethod,
         [string]$RequestedHeaders
     )
-    if ($HostHeader -cne $ExpectedHost -or $Origin -cne $ExpectedOrigin -or $Path -cnotin @("/api/pick", "/api/latest", "/api/save", "/api/status", "/api/retention", "/api/targets")) { return $false }
+    if ($HostHeader -cne $ExpectedHost -or $Origin -cne $ExpectedOrigin -or $Path -cnotin @("/api/pick", "/api/latest", "/api/save", "/api/status", "/api/retention", "/api/targets", "/api/font-size")) { return $false }
     if ($Method -ceq "POST") {
-        $lengthAllowed = if ($Path -ceq "/api/save") { $ContentLength -gt 0 -and $ContentLength -le 1048576 } elseif ($Path -ceq "/api/retention") { $ContentLength -gt 0 -and $ContentLength -le 4096 } elseif ($Path -ceq "/api/targets") { $ContentLength -ge 0 -and $ContentLength -le 4096 } else { $ContentLength -eq 0 }
+        $lengthAllowed = if ($Path -ceq "/api/save") { $ContentLength -gt 0 -and $ContentLength -le 1048576 } elseif ($Path -ceq "/api/retention") { $ContentLength -gt 0 -and $ContentLength -le 4096 } elseif ($Path -cin @("/api/targets", "/api/font-size")) { $ContentLength -ge 0 -and $ContentLength -le 4096 } else { $ContentLength -eq 0 }
         return $Token -ceq $ExpectedToken -and $lengthAllowed
     }
     if ($Method -ceq "OPTIONS") {
@@ -260,6 +260,7 @@ $settingsPath = if ($SaveFolderOverride) { Join-Path $saveFolder ".apocalypter-e
     Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) "ApocalypterSaveEditor\settings.json"
 }
 $targetsPath = Join-Path ([IO.Path]::GetDirectoryName($settingsPath)) "bulk-targets.json"
+$fontSizePath = Join-Path ([IO.Path]::GetDirectoryName($settingsPath)) "font-size.json"
 $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
 $nodePath = if ($nodeCommand) { $nodeCommand.Source } else { $null }
 if ($nodePath) {
@@ -333,7 +334,7 @@ try {
             continue
         }
 
-        if ($request.HttpMethod -ceq "OPTIONS" -and $path -cin @("/api/pick", "/api/latest", "/api/save", "/api/status", "/api/retention", "/api/targets")) {
+        if ($request.HttpMethod -ceq "OPTIONS" -and $path -cin @("/api/pick", "/api/latest", "/api/save", "/api/status", "/api/retention", "/api/targets", "/api/font-size")) {
             $allowed = Test-PickerRequest -Method $request.HttpMethod -Path $path -HostHeader $hostHeader `
                 -Origin $origin -ExpectedHost $expectedHost -ExpectedOrigin $expectedOrigin `
                 -RequestedMethod $request.Headers["Access-Control-Request-Method"] `
@@ -353,7 +354,7 @@ try {
         }
 
         $policyHeld = $false
-        if ($request.HttpMethod -ceq "POST" -and $path -cin @("/api/pick", "/api/latest", "/api/save", "/api/retention", "/api/targets")) {
+        if ($request.HttpMethod -ceq "POST" -and $path -cin @("/api/pick", "/api/latest", "/api/save", "/api/retention", "/api/targets", "/api/font-size")) {
             if (-not (Test-PickerRequest -Method $request.HttpMethod -Path $path -HostHeader $hostHeader `
                 -Origin $origin -Token $request.Headers["X-Editor-Token"] -ExpectedHost $expectedHost `
                 -ExpectedOrigin $expectedOrigin -ExpectedToken $token -ContentLength $request.ContentLength64)) {
@@ -368,6 +369,17 @@ try {
             }
         }
         try {
+        if ($request.HttpMethod -ceq "POST" -and $path -ceq "/api/font-size") {
+            try {
+                if ($request.ContentLength64 -gt 0) {
+                    $reader = [IO.StreamReader]::new($request.InputStream, [Text.Encoding]::UTF8)
+                    try { $payload = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+                    Write-FontSize $fontSizePath $payload
+                }
+                Write-Json $context 200 @{ fontSize = (Read-FontSize $fontSizePath) } $expectedOrigin
+            } catch { Write-Json $context 409 @{ error = "Text size could not be loaded or saved: $($_.Exception.Message) No game save was changed." } $expectedOrigin }
+            continue
+        }
         if ($request.HttpMethod -ceq "POST" -and $path -ceq "/api/targets") {
             try {
                 if ($request.ContentLength64 -gt 0) {

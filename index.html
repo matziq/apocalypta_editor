@@ -32,6 +32,13 @@ FORM: Familiar desktop utility, with an in-place before/after review instead of 
         </select>
       </label>
       <span class="theme-control"><button id="theme-toggle" type="button" aria-pressed="false">Use dark mode</button></span>
+      <div class="font-controls" role="group" aria-label="Text size">
+        <span>Text</span>
+        <button id="font-decrease" type="button" aria-label="Decrease text size">−</button>
+        <output id="font-size" aria-live="polite">100%</output>
+        <button id="font-increase" type="button" aria-label="Increase text size">+</button>
+      </div>
+      <span id="font-status" role="status" aria-live="polite"></span>
       <span class="local">Offline &middot; stays on your device</span>
       <span id="appearance-status" role="status" aria-live="polite"></span>
     </div>

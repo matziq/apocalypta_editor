@@ -57,6 +57,12 @@ test("run.bat serves the actual assets and authenticated latest/backup/autosave 
   assert.equal((await post("/api/latest", {})).status, 403);
   assert.equal((await post("/api/targets", null, { "X-Editor-Token": "bad" })).status, 403);
   assert.equal((await post("/api/targets", null, { Origin: "http://evil.invalid" })).status, 403);
+  assert.equal((await post("/api/font-size", null, { "X-Editor-Token": "bad" })).status, 403);
+  assert.equal((await post("/api/font-size", null, { Origin: "http://evil.invalid" })).status, 403);
+  assert.equal((await (await post("/api/font-size")).json()).fontSize, 100);
+  assert.equal((await post("/api/font-size", { fontSize: 80 })).status, 200);
+  for (const value of [79, 81, 150, "100"]) assert.equal((await post("/api/font-size", { fontSize: value })).status, 409);
+  assert.equal((await (await post("/api/font-size")).json()).fontSize, 80);
   assert.deepEqual((await (await post("/api/targets")).json()).targets,
     { ammo: 999, consumables: 999, nuts: 900000, liquids: 100 });
   const targets = { ammo: 321, consumables: 765, nuts: 12345, liquids: 25 };

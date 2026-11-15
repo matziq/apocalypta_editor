@@ -755,12 +755,12 @@ test("Repair & Top Off sets carried ammo and requested capacities but leaves oth
   require("../vehicle-actions.js").topOffConsumables(doc.fields, f => ({ value: f.value, invalid: false }),
     (f, value) => { changes[f.id] = value; }, require("../save-format.js").validate);
   assert.deepEqual(changes, Object.fromEntries([...counts.map(name => [`Ammo.ammo_${name}`, 999]),
-    ...["9mm", "20gauge", "arrow"].map(name => [`Ammo.ammo_${name}_capacity`, 999])]));
+    ...["22caliber", "9mm", "20gauge", "arrow"].map(name => [`Ammo.ammo_${name}_capacity`, 999])]));
   const edited = JSON.parse(serialize(text, changes)).Ammo.value.objs;
   assert.equal(edited.armor.value, 0);
   assert.equal(edited.armorPlates.value, 0);
   assert.equal(edited.unknownCounter.value, 5);
-  for (const name of capacities) assert.equal(edited[`ammo_${name}_capacity`].value, ["9mm", "20gauge", "arrow"].includes(name) ? 999 : 40);
+  for (const name of capacities) assert.equal(edited[`ammo_${name}_capacity`].value, ["22caliber", "9mm", "20gauge", "arrow"].includes(name) ? 999 : 40);
 });
 
 test("vehicle top-off includes only uniquely mounted verified radiator liquid", () => {

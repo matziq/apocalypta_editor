@@ -29,6 +29,18 @@ test("persists explicit theme and palette preferences", () => {
   assert.equal(loaded.palette, "nuclear-winter");
 });
 
+test("font size defaults, persists and rejects invalid stored values", () => {
+  const store = storage();
+  const preferences = Preferences.load(store, false);
+  assert.equal(preferences.fontSize, 100);
+  preferences.fontSize = 80;
+  Preferences.save(store, preferences);
+  assert.equal(Preferences.load(store, false).fontSize, 80);
+  for (const size of [79, 81, 150, "100", null]) {
+    assert.throws(() => Preferences.load(storage(JSON.stringify({ fontSize: size })), false), /Text size/);
+  }
+});
+
 test("applies every game-world palette in both themes without touching save data", () => {
   for (const palette of Preferences.palettes) {
     for (const theme of ["light", "dark"]) {

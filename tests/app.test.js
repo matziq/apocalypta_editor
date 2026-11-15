@@ -59,7 +59,7 @@ function app({ stored = null, pickerResult, pickerError, native = true, confirm 
   };
   const context = vm.createContext({
     document: {
-      body: { dataset: {} },
+      body: { dataset: {}, style: { setProperty() {} } },
       createElement: element,
       createElementNS: element,
       getElementById(id) {
@@ -88,6 +88,7 @@ function app({ stored = null, pickerResult, pickerError, native = true, confirm 
     fetch: async (url, init) => {
       fetches.push({ url, init });
       if (url === "/api/targets") return { ok: true, json: async () => ({ targets: init.body ? JSON.parse(init.body) : VehicleActions.defaultTargets }) };
+      if (url === "/api/font-size") return { ok: true, json: async () => ({ fontSize: init.body ? JSON.parse(init.body).fontSize : 100 }) };
       if (fetchResponse) return fetchResponse(url, init);
       if (url === "/api/status") return { ok: true, json: async () => ({ protocolVersion: 4, backupLimit: 3, folderExists: true, saveFolder: "C:\\Synthetic\\Apocalypter" }) };
       if (pickerError) throw pickerError;
@@ -109,6 +110,24 @@ test("malformed preferences cannot prevent file-picker event binding", () => {
   assert.equal(typeof ui.elements.get("file").events.change, "function");
   assert.equal(typeof ui.elements.get("native-picker").events.click, "function");
   assert.equal(ui.elements.get("browser-picker-controls").hidden, true);
+});
+
+test("browser text sizing persists and never stages save changes or discards drafts", async () => {
+  const ui = app({ native: false });
+  nativeFixture(ui, healthText(50));
+  draft(ui, "Player.Health").value = "47";
+  await ui.elements.get("font-decrease").events.click();
+  assert.equal(ui.elements.get("font-size").textContent, "90%");
+  assert.equal(draft(ui, "Player.Health").value, "47");
+  assert.equal(vm.runInContext("changes.size", ui.context), 0);
+  assert.equal(ui.fetches.length, 0);
+  const relaunched = app({ native: false, stored: ui.stored() });
+  assert.equal(relaunched.elements.get("font-size").textContent, "90%");
+  await relaunched.elements.get("font-decrease").events.click();
+  assert.equal(relaunched.elements.get("font-decrease").disabled, true);
+  for (let i = 0; i < 6; i++) await relaunched.elements.get("font-increase").events.click();
+  assert.equal(relaunched.elements.get("font-size").textContent, "140%");
+  assert.equal(relaunched.elements.get("font-increase").disabled, true);
 });
 
 test("native picker cancellation preserves the document and staged edits", async () => {
@@ -201,7 +220,7 @@ test("native startup autoload adopts backed-up source; standalone startup never 
   } } });
   ui.windowEvents.DOMContentLoaded();
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(ui.fetches.map(request => request.url), ["/api/targets", "/api/status", "/api/latest"]);
+  assert.deepEqual(ui.fetches.map(request => request.url), ["/api/targets", "/api/font-size", "/api/status", "/api/latest"]);
   assert.equal(vm.runInContext("nativeSource.handle", ui.context), "opened");
   assert.match(ui.elements.get("source-status").textContent, /SaveGame2.*original\.bak/);
   assert.equal(ui.elements.get("autosave").checked, false);
@@ -474,8 +493,8 @@ test("Player Maximize defaults requested ammo capacities to 999 without touching
   const ui = app();
   nativeFixture(ui, JSON.stringify({ Ammo: pm({ ...ints, armor: scalar(0), armorPlates: { __type: "int", value: 0 } }) }));
   ui.elements.get("maximize-player").events.click();
-  for (const name of ["9mm", "20gauge", "arrow"]) assert.equal(draft(ui, `Ammo.ammo_${name}_capacity`).value, "999");
-  for (const name of ["22caliber", "battery"]) assert.equal(draft(ui, `Ammo.ammo_${name}_capacity`).value, "40");
+  for (const name of ["22caliber", "9mm", "20gauge", "arrow"]) assert.equal(draft(ui, `Ammo.ammo_${name}_capacity`).value, "999");
+  assert.equal(draft(ui, "Ammo.ammo_battery_capacity").value, "40");
   assert.equal(draft(ui, "Ammo.armor").value, "0");
   assert.equal(vm.runInContext('changes.has("Ammo.armorPlates")', ui.context), false);
 });
@@ -508,7 +527,7 @@ test("configured targets apply across bulk entry points, preserve armor and unre
   const root = JSON.parse(ui.context.worldText);
   root.Ammo = pm({ armor: scalar(0), armorPlates: { __type: "int", value: 0 },
     ammo_9mm: { __type: "int", value: 2 }, ammo_9mm_capacity: { __type: "int", value: 40 },
-    ammo_20gauge_capacity: { __type: "int", value: 40 }, ammo_arrow_capacity: { __type: "int", value: 40 },
+    ammo_22caliber_capacity: { __type: "int", value: 40 }, ammo_20gauge_capacity: { __type: "int", value: 40 }, ammo_arrow_capacity: { __type: "int", value: 40 },
     ammo_battery_capacity: { __type: "int", value: 40 } });
   root.global = pm({ Money: { __type: "int", value: 3 } });
   root["engine(Clone)2"].value.objs.Liquid = scalar(6);
@@ -532,7 +551,7 @@ test("configured targets apply across bulk entry points, preserve armor and unre
   assert.equal(draft(ui, "Ammo.ammo_9mm").value, "321");
   assert.equal(draft(ui, "global.Money").value, "12345");
   assert.equal(draft(ui, "Ammo.armor").value, "0");
-  for (const name of ["9mm", "20gauge", "arrow"]) assert.equal(draft(ui, `Ammo.ammo_${name}_capacity`).value, "321");
+  for (const name of ["22caliber", "9mm", "20gauge", "arrow"]) assert.equal(draft(ui, `Ammo.ammo_${name}_capacity`).value, "321");
   assert.equal(draft(ui, "Ammo.ammo_battery_capacity").value, "40");
   vm.runInContext("render()", ui.context);
   ui.elements.get("maximize-items").events.click();
@@ -543,7 +562,7 @@ test("configured targets apply across bulk entry points, preserve armor and unre
   ui.elements.get("all-vehicles").events.click();
   assert.equal(draft(ui, "vehicle:car-1:0:fuel").value, "5");
   assert.equal(draft(ui, "Ammo.ammo_9mm").value, "321");
-  for (const name of ["9mm", "20gauge", "arrow"]) assert.equal(draft(ui, `Ammo.ammo_${name}_capacity`).value, "321");
+  for (const name of ["22caliber", "9mm", "20gauge", "arrow"]) assert.equal(draft(ui, `Ammo.ammo_${name}_capacity`).value, "321");
   assert.equal(draft(ui, "item:aid:3:Quantity").value, "765");
   assert.equal(draft(ui, "item:box:4:ammo").value, "321");
   assert.equal(draft(ui, "global.Money").value, "12345");
