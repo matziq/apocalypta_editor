@@ -1011,7 +1011,7 @@ for (const [id, text] of [
   ["editable-only", "Shows only item instances with at least one currently editable field. Combines with text search; hidden items and their drafts are not deleted."],
   ["maximize-player", "Stages health and supplies to 100, Nuts to 900,000, and Hunger, Thirst, Fatigue and Radiation to 0. Armor and plates are not changed. Values above these targets can be lowered. Read-only fields and invalid target drafts are skipped."],
   ["maximize-items", "Stages verified conditions and liquids to their maximum, verified ammo and bandages to 100, repair kits to 999, and weapon-type loaded ammo to 100. These requested counts are not verified game maxima and can lower higher values or exceed normal capacities. Unverified counters, invalid drafts and read-only values are skipped."],
-  ["all-vehicles", "Stages verified vehicle repairs and liquid fills, verified consumable and ammunition counts to 999, and Nuts to 900,000. Counts can exceed normal game limits or lower higher values. Armor, plates, unknown counters and invalid drafts are untouched."],
+  ["all-vehicles", "Stages verified vehicle repairs and liquid fills, verified consumable and ammunition counts (including flashlight battery packs) to 999, and Nuts to 900,000. Counts can exceed normal game limits or lower higher values. Armor, plates, unknown counters and invalid drafts are untouched."],
   ["repair-vehicle", "Stages this selected vehicle's reference-matched component Condition values to 100%. It does not repair unlinked or stored spare parts."],
   ["topoff-vehicle", "Stages this selected vehicle's fuel and verified mounted engine and radiator liquids to their capacities. Missing/invalid mappings and loose cargo are skipped."]
 ]) {

@@ -551,6 +551,122 @@ test("bulk counts require exact item prefab and owner identity for bandages, rep
   }
 });
 
+test("Repair & Top Off covers all verified item consumables with exact identity and existing counters", () => {
+  const cases = [
+    ["bandage_1", "688495819279421776", "Quantity"],
+    ["Repairbox_Small", "9121322384858893382", "Quantity"],
+    ["Repairbox_Medium", "7600464120049698740", "Quantity"],
+    ["Repairbox_Large", "4165647324065915868", "Quantity"],
+    ["first_aid_1", "3955095449936337101", "Quantity"],
+    ["weed_bag", "2856772050428381491", "Quantity"],
+    ["cigarette_bactrian", "7947724335221001397", "Quantity"],
+    ["cigar", "6706846953073870613", "Quantity"],
+    ["sanity_pills", "4398581480533230246", "Quantity"],
+    ["flashlight_batteries", "6027655925999442117", "batteries"],
+    ["ammo_arrow", "3766863323530176910", "ammo"],
+    ["ammo_box_20gauge", "5513939087385948062", "ammo"],
+    ["ammo_box_22", "3910063457913955151", "ammo"],
+    ["ammo_box_big_22", "5744510244793180658", "ammo"],
+    ["ammo_box_big_12gauge", "2411824388914619091", "ammo"],
+    ["ammo_box_big_762mm", "3133067563820807118", "ammo"],
+    ["ammo_box_762mm", "3377769854383720206", "ammo"],
+    ["ammo_box_556mm", "8401587218543670294", "ammo"],
+    ["ammo_box_12gauge", "8519476287603981168", "ammo"],
+    ["ammo_box_3006", "2704672928494571242", "ammo"],
+    ["ammo_box_big_3006", "7095138909402377063", "ammo"],
+    ["ammo_box_big_9mm", "2992344171066298429", "ammo"],
+    ["ammo_box_big_20gauge", "6949040989765713240", "ammo"],
+    ["ammo_box_big_arrow", "1625578815151821771", "ammo"],
+    ["ammo_box_9mm", "3733066396143753576", "ammo"],
+    ["ammo_box_big_556mm", "6082136355384846395", "ammo"]
+  ];
+  const Actions = require("../vehicle-actions.js");
+  for (const [name, id, key] of cases) {
+    const root = prefabLiquidSave(name, id);
+    const record = root[`${name}(Clone)1`].value.objs;
+    delete record.Liquid;
+    record[key] = { __type: "int", value: 1200 };
+    record.ForBuyInt = { __type: "int", value: 3 };
+    const text = JSON.stringify(root), doc = inspect(text), field = doc.fields.find(f => f.topOffConsumable);
+    assert.ok(field, name);
+    const changes = {};
+    Actions.topOffConsumables(doc.fields, f => ({ value: f.value, invalid: false }),
+      (f, value) => { changes[f.id] = value; }, require("../save-format.js").validate);
+    assert.deepEqual(changes, { [field.id]: 999 }, name);
+    assert.equal(serialize(text, changes), text.slice(0, field.start) + "999" + text.slice(field.end), name);
+    assert.equal(serialize(text, {}), text);
+    record.owner.es3Prefab.prefabId = "wrong";
+    assert.equal(inspect(JSON.stringify(root)).fields.some(f => f.topOffConsumable), false, name);
+    record.owner.es3Prefab.prefabId = id;
+    delete record[key];
+    assert.equal(inspect(JSON.stringify(root)).fields.some(f => f.topOffConsumable), false, name);
+  }
+});
+
+test("battery pack editing refuses ambiguous identity and invalid counters without affecting unrelated fields", () => {
+  for (const alter of [
+    root => { root["flashlight_batteries(Clone)1"].value.objs.batteries = { __type: "int", value: -1 }; },
+    root => { root["flashlight_batteries(Clone)1"].value.objs.batteries = { __type: "int", value: 1.5 }; },
+    root => { root["flashlight_batteries(Clone)1"].value.objs.batteries = { __type: "int", value: 2147483648 }; },
+    root => { root["flashlight_batteries(Clone)1"].value.objs.batteries = { __type: "float", value: 3 }; },
+    root => { root["flashlight_batteries(Clone)1"].value.objs.batteries = { __type: "int", value: "3" }; },
+    root => { root["flashlight_batteries(Clone)1"].value.objs.owner._ES3Ref = "different"; },
+    root => { root.newGOArray_Items.value.array.push(root.newGOArray_Items.value.array[0]); },
+    root => { root.newGOArray_Items.value.array[0].es3Prefab.prefabId = "unknown"; }
+  ]) {
+    const root = prefabLiquidSave("flashlight_batteries", "6027655925999442117");
+    root["flashlight_batteries(Clone)1"].value.objs.batteries = { __type: "int", value: 5 };
+    alter(root);
+    const text = JSON.stringify(root), doc = inspect(text);
+    assert.equal(doc.fields.some(f => f.topOffConsumable), false);
+    assert.equal(serialize(text, {}), text);
+  }
+  const root = prefabLiquidSave("flashlight_batteries", "6027655925999442117");
+  root["flashlight_batteries(Clone)1"].value.objs.batteries = { __type: "int", value: 5 };
+  const text = JSON.stringify(root).replace('"batteries":{"__type":"int","value":5}', '"batteries":{"__type":"int"5,"value":9}');
+  const doc = inspect(text);
+  assert.equal(doc.fields.some(f => f.topOffConsumable), false);
+  assert.ok(doc.items[0].readOnlyFields.some(f => f.name === "batteries"));
+  assert.match(doc.items[0].warnings.join(" "), /shown read-only/);
+  assert.equal(serialize(text, {}), text);
+});
+
+test("battery pack counts support zero, existing positive values and signed-int bounds without changing Saved Items Maximize", () => {
+  for (const count of [0, 2, 2147483647]) {
+    const root = prefabLiquidSave("flashlight_batteries", "6027655925999442117");
+    delete root["flashlight_batteries(Clone)1"].value.objs.Liquid;
+    root["flashlight_batteries(Clone)1"].value.objs.batteries = { __type: "int", value: count };
+    const text = JSON.stringify(root), doc = inspect(text), field = doc.fields.find(f => f.topOffConsumable);
+    assert.equal(field.value, count);
+    assert.equal(doc.items[0].readOnlyFields.some(f => f.name === "batteries"), false);
+    const changes = {};
+    require("../vehicle-actions.js").maximizeItems(doc.items, doc.fields, f => ({ value: f.value, invalid: false }),
+      (f, value) => { changes[f.id] = value; }, require("../save-format.js").validate);
+    assert.deepEqual(changes, {});
+    assert.equal(serialize(text, { [field.id]: 999 }), text.slice(0, field.start) + "999" + text.slice(field.end));
+    assert.throws(() => serialize(text, { [field.id]: -1 }), /must be between/);
+    assert.throws(() => serialize(text, { [field.id]: 2147483648 }), /must be between/);
+  }
+});
+
+test("Repair & Top Off sets every carried ammo count but leaves capacities, armor and plates unchanged", () => {
+  const counts = ["22caliber", "9mm", "20gauge", "arrow", "grenade", "12gauge", "556", "762", "3006", "battery"];
+  const capacities = ["22caliber", "9mm", "20gauge", "arrow", "battery"];
+  const ints = Object.fromEntries([...counts.map(name => [`ammo_${name}`, { __type: "int", value: 2 }]),
+    ...capacities.map(name => [`ammo_${name}_capacity`, { __type: "int", value: 40 }])]);
+  const text = JSON.stringify({ Ammo: pm({ ...ints, armor: { __type: "float", value: 0 },
+    armorPlates: { __type: "int", value: 0 }, unknownCounter: { __type: "int", value: 5 } }) });
+  const doc = inspect(text), changes = {};
+  require("../vehicle-actions.js").topOffConsumables(doc.fields, f => ({ value: f.value, invalid: false }),
+    (f, value) => { changes[f.id] = value; }, require("../save-format.js").validate);
+  assert.deepEqual(changes, Object.fromEntries(counts.map(name => [`Ammo.ammo_${name}`, 999])));
+  const edited = JSON.parse(serialize(text, changes)).Ammo.value.objs;
+  assert.equal(edited.armor.value, 0);
+  assert.equal(edited.armorPlates.value, 0);
+  assert.equal(edited.unknownCounter.value, 5);
+  for (const name of capacities) assert.equal(edited[`ammo_${name}_capacity`].value, 40);
+});
+
 test("vehicle top-off includes only uniquely mounted verified radiator liquid", () => {
   const Actions = require("../vehicle-actions.js");
   const root = prefabLiquidSave("radiator_medium_race", "2169926468007209799");

@@ -112,7 +112,8 @@
     "2856772050428381491": { name: "weed_bag", key: "Quantity" },
     "7947724335221001397": { name: "cigarette_bactrian", key: "Quantity" },
     "6706846953073870613": { name: "cigar", key: "Quantity" },
-    "4398581480533230246": { name: "sanity_pills", key: "Quantity" }
+    "4398581480533230246": { name: "sanity_pills", key: "Quantity" },
+    "6027655925999442117": { name: "flashlight_batteries", key: "batteries" }
   };
   const switchHelp = {
     peacefulMode: "True enables the game's peaceful-mode setting. The exact affected enemy behaviors have not been independently verified.",
@@ -519,6 +520,19 @@
             }
           } else itemRecord.warnings.push("Saved quantity is outside the safe editable range (1 to 2,147,483,647); shown read-only.");
         } else if (at(associated.data, "Quantity")) itemRecord.warnings.push(quantity.error);
+        if (verifiedTopOffPrefab?.key === "batteries" && at(associated.data, "batteries")) {
+          const count = numericValue(at(associated.data, "batteries"), "int", item.name);
+          if (count.value !== undefined && !(count.node.implicit && at(count.node, "value")) &&
+            Number.isInteger(count.value) && count.value >= 0 && count.value <= 2147483647) {
+            const field = add(`${itemRecord.id}:batteries`, `${item.name} battery count`, "Existing item batteries",
+              count.node, "int", 0, 2147483647, "items",
+              "Battery count in this exact verified flashlight battery pack; its pickup FSM adds these units to player ammo_battery. No pack is created.");
+            if (field) {
+              field.topOffConsumable = true;
+              itemRecord.fieldIds.push(field.id);
+            }
+          } else itemRecord.warnings.push(count.error || "Battery count must contain one nonnegative signed 32-bit integer; shown read-only.");
+        }
       } else if (referenceIsUnique && !wheelMatches) {
         itemRecord.warnings.push("No uniquely matching typed item record; this existing object is shown read-only.");
       }
@@ -622,7 +636,7 @@
             ? "No valid saved capacity or exact verified prefab capacity supports this amount; no capacity or units are guessed."
             : name === "LiquidCapacity"
               ? "Saved capacity is a limit, not an editable amount."
-              : ["Quantity", "Condition", "ammo"].includes(name)
+              : ["Quantity", "Condition", "ammo", "batteries"].includes(name)
                 ? "This saved value does not meet the supported type or range; it is preserved unchanged."
                 : "This field's gameplay meaning or safe range has not been verified; it is preserved unchanged.";
           itemRecord.readOnlyFields.push({ name, value: value.value, reason, help: `Saved ${name}: ${value.value}. Read-only: ${reason} No gameplay effect, unit, or safe range beyond the stated evidence is assumed.` });

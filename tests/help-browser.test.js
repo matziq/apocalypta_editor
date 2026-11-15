@@ -191,13 +191,17 @@ test("Repair & Top Off autosaves verified supplies without changing unplated arm
   const { origin, fixture } = await syntheticBridge();
   const pm = objs => ({ __type: "ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass", value: { objs } });
   const name = "first_aid_1(Clone)1", ref = "aid-1", prefab = { prefabId: "3955095449936337101" };
+  const batteryName = "flashlight_batteries(Clone)2", batteryRef = "batteries-2", batteryPrefab = { prefabId: "6027655925999442117" };
   const target = path.join(fixture, "SaveGame1.es3");
   fs.writeFileSync(target, JSON.stringify({
     Ammo: pm({ armor: { __type: "float", value: 0 }, armorPlates: { __type: "int", value: 0 },
       ammo_9mm: { __type: "int", value: 4 }, ammo_9mm_capacity: { __type: "int", value: 40 } }),
     global: pm({ Money: { __type: "int", value: 42 } }),
-    newGOArray_Items: { value: { array: [{ name, _ES3Ref: ref, es3Prefab: prefab }] } },
-    [name]: pm({ owner: { _ES3Ref: ref, es3Prefab: prefab }, Quantity: { __type: "int", value: 3 } })
+    newGOArray_Items: { value: { array: [{ name, _ES3Ref: ref, es3Prefab: prefab },
+      { name: batteryName, _ES3Ref: batteryRef, es3Prefab: batteryPrefab }] } },
+    [name]: pm({ owner: { _ES3Ref: ref, es3Prefab: prefab }, Quantity: { __type: "int", value: 3 } }),
+    [batteryName]: pm({ owner: { _ES3Ref: batteryRef, es3Prefab: batteryPrefab },
+      batteries: { __type: "int", value: 0 }, ForBuyInt: { __type: "int", value: 0 } })
   }));
   const browser = await launchBrowser();
   try {
@@ -217,6 +221,8 @@ test("Repair & Top Off autosaves verified supplies without changing unplated arm
     assert.equal(saved.Ammo.value.objs.ammo_9mm_capacity.value, 40);
     assert.equal(saved.global.value.objs.Money.value, 900000);
     assert.equal(saved[name].value.objs.Quantity.value, 999);
+    assert.equal(saved[batteryName].value.objs.batteries.value, 999);
+    assert.equal(saved[batteryName].value.objs.ForBuyInt.value, 0);
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });

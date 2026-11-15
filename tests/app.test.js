@@ -580,6 +580,7 @@ test("Repair & Top Off batches verified consumables and Nuts while preserving ar
     ["ammo_arrow", "3766863323530176910", "ammo"],
     ["cigarette_bactrian", "7947724335221001397", "Quantity"],
     ["cigar", "6706846953073870613", "Quantity"],
+    ["flashlight_batteries", "6027655925999442117", "batteries"],
     ["mystery_food", "unknown", "Quantity"],
     ["first_aid_1", "3955095449936337101", "Quantity"]
   ];
@@ -588,7 +589,7 @@ test("Repair & Top Off batches verified consumables and Nuts while preserving ar
     const prefab = { prefabId: id };
     root.newGOArray_Items.value.array.push({ name: savedName, _ES3Ref: ref, es3Prefab: prefab,
       components: [{ __type: "Transform", parent: null }] });
-    root[savedName] = pm({ owner: { _ES3Ref: ref, es3Prefab: index === 10 ? { prefabId: "wrong" } : prefab },
+    root[savedName] = pm({ owner: { _ES3Ref: ref, es3Prefab: index === 11 ? { prefabId: "wrong" } : prefab },
       [key]: { __type: "int", value: 4 } });
   }
   text = JSON.stringify(root);
@@ -600,12 +601,12 @@ test("Repair & Top Off batches verified consumables and Nuts while preserving ar
   assert.equal(payload.changes["Ammo.ammo_9mm"], 999);
   assert.equal(payload.changes["weaponsAmmoInGun.ammoakms"], 999);
   assert.equal(payload.changes["global.Money"], 900000);
-  for (let index = 0; index < 9; index++) {
-    const key = index === 5 || index === 6 ? "ammo" : "Quantity";
+  for (let index = 0; index < 10; index++) {
+    const key = index === 9 ? "batteries" : index === 5 || index === 6 ? "ammo" : "Quantity";
     assert.equal(payload.changes[`item:consumable-${index}:${index + 3}:${key}`], 999);
   }
   for (const id of ["Ammo.armor", "Ammo.armorPlates", "Ammo.ammo_9mm_capacity",
-    "weaponsAmmoInGun.ammoUnknown", "item:consumable-9:12:Quantity", "item:consumable-10:13:Quantity"]) {
+    "weaponsAmmoInGun.ammoUnknown", "item:consumable-10:13:Quantity", "item:consumable-11:14:Quantity"]) {
     assert.equal(payload.changes[id], undefined, id);
   }
   const saved = JSON.parse(Save.serialize(text, payload.changes));
