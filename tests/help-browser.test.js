@@ -372,6 +372,7 @@ test("game-world palettes remain readable on desktop and mobile", browserOptions
   const browser = await launchBrowser();
   try {
     const page = await browser.newPage();
+    await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto(origin);
     await page.waitForFunction(() => !targetsBusy);
     const seen = new Set();
@@ -379,22 +380,56 @@ test("game-world palettes remain readable on desktop and mobile", browserOptions
       await page.setViewportSize({ width, height: 900 });
       for (const theme of ["light", "dark"]) for (const palette of ["wasteland", "desert", "nuclear-winter", "apocalypse"]) {
         await page.evaluate(({ theme, palette }) => { preferences.theme = theme; preferences.palette = palette; updateAppearance(); }, { theme, palette });
+        await page.locator("#theme-toggle").hover();
         const values = await page.evaluate(() => {
           const css = getComputedStyle(document.body);
           const color = key => css.getPropertyValue(key).trim();
+          const swatch = document.createElement("span");
+          swatch.style.color = color("--accent-strong");
           const luminance = hex => {
             if (/^#[0-9a-f]{3}$/i.test(hex)) hex = "#" + [...hex.slice(1)].map(c => c + c).join("");
             const values = hex.match(/[0-9a-f]{2}/gi).map(x => parseInt(x, 16) / 255).map(x => x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4);
             return values[0] * 0.2126 + values[1] * 0.7152 + values[2] * 0.0722;
           };
           const contrast = (a, b) => { const x = luminance(a), y = luminance(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
-          return { canvas: color("--canvas"), surface: color("--surface"),
+          return { canvas: color("--canvas"), surface: color("--surface"), headerBg: color("--header-bg"), accent: color("--accent"),
+            hoverActual: getComputedStyle(document.getElementById("theme-toggle")).backgroundColor, hoverExpected: swatch.style.color,
             body: contrast(color("--ink"), color("--canvas")), help: contrast(color("--ink"), color("--surface")),
             muted: contrast(color("--muted"), color("--surface")), button: contrast(color("--button-text"), color("--accent")),
+            sideText: contrast(color("--muted"), color("--canvas")),
+            header: contrast(color("--header-ink"), color("--header-bg")),
+            headerHelp: contrast(color("--header-help"), color("--header-bg")),
+            selected: contrast(color("--accent"), color("--surface")),
+            sideAction: contrast(color("--accent"), color("--canvas")),
+            input: contrast(color("--ink"), color("--input-bg")),
+            placeholder: contrast(color("--muted"), color("--input-bg")),
+            error: contrast(color("--danger"), color("--surface")),
+            sideError: contrast(color("--danger"), color("--canvas")),
+            warning: contrast(color("--warning"), color("--surface")),
+            hover: contrast(color("--button-hover-text"), color("--accent-strong")),
+            focus: contrast(color("--focus"), color("--surface")),
+            sideFocus: contrast(color("--focus"), color("--canvas")),
             overflow: document.documentElement.scrollWidth > innerWidth };
         });
-        assert.ok(values.body >= 4.5 && values.help >= 4.5 && values.muted >= 4.5 && values.button >= 4.5, `${theme}/${palette}: ${JSON.stringify(values)}`);
+        for (const role of ["body", "help", "muted", "button", "sideText", "header", "headerHelp", "selected", "sideAction", "input", "placeholder", "error", "sideError", "warning", "hover"]) {
+          assert.ok(values[role] >= 4.5, `${theme}/${palette}/${role}: ${JSON.stringify(values)}`);
+        }
+        assert.ok(values.focus >= 3 && values.sideFocus >= 3, `${theme}/${palette}/focus: ${JSON.stringify(values)}`);
+        assert.equal(values.hoverActual, values.hoverExpected, `${theme}/${palette} hover must use that palette's action color`);
         assert.equal(values.overflow, false, `${theme}/${palette}/${width}`);
+        const rgb = hex => hex.slice(1).match(/../g).map(part => parseInt(part, 16));
+        if (palette === "nuclear-winter") {
+          const [red, , blue] = rgb(values.headerBg);
+          assert.ok(blue > red, "Nuclear Winter must have a dark-blue header");
+          if (theme === "light") {
+            const [r, g, b] = rgb(values.surface);
+            assert.ok(r > b && g > b && b > 200, "Nuclear Winter light surfaces must be bone white");
+          }
+        }
+        if (palette === "apocalypse") {
+          const [r, g, b] = rgb(values.accent), header = rgb(values.headerBg);
+          assert.ok(r > g && g > b && Math.max(...header) < 40, "Apocalypse needs orange/red accents and a black header");
+        }
         if (width === 1440 && theme === "light") seen.add(values.canvas);
       }
     }
