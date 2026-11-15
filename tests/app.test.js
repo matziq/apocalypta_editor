@@ -466,6 +466,23 @@ test("player bulk action is one coherent autosave, sets exact values, and preser
   assert.equal(vm.runInContext("changes.size", ui.context), 0);
 });
 
+test("Saved Items omits the weapon-type section without changing carried supplies or saved counters", () => {
+  const text = JSON.stringify({
+    Ammo: pm({ ammo_9mm: { __type: "int", value: 42 } }),
+    weaponsAmmoInGun: pm({ ammoakms: { __type: "int", value: 17 } })
+  });
+  const ui = app();
+  nativeFixture(ui, text);
+  const legends = ui.elements.get("fields").children.map(group => group.children[0].textContent);
+  assert.ok(legends.includes("Supplies"));
+  assert.equal(legends.includes("Ammunition by weapon type"), false);
+  assert.equal(draft(ui, "Ammo.ammo_9mm").value, "42");
+  const typeRow = vm.runInContext("fieldRows.get('weaponsAmmoInGun.ammoakms')", ui.context);
+  assert.equal(typeRow.parentNode, undefined);
+  assert.equal(vm.runInContext("changes.size", ui.context), 0);
+  assert.equal(vm.runInContext("ApocalypterSave.serialize(doc.text, changes)", ui.context), text);
+});
+
 test("Nuts can be edited and saved with the requested bulk target", async () => {
   const text = JSON.stringify({ global: pm({ Money: { __type: "int", value: 42 } }), Player: pm({ Health: scalar(50) }) });
   let payload;

@@ -150,6 +150,8 @@ Fallback requires the exact base name and matching prefab IDs in **both** the sa
 
 Duplicate object references across item and vehicle arrays are marked ambiguous and withheld from editing. The `akms(Clone)50` instance is labeled by its saved identifier (AKMS); it is not renamed AK47. Its loaded-round counter remains weapon-type scoped; an ammo box's own `ammo` value is separately instance-scoped.
 
+The **Saved items** tab omits the separate **Ammunition by weapon type** field section. Carried ammunition remains editable under **Player & supplies → Supplies**. The underlying weapon-type counters are preserved; existing bulk actions still apply their documented targets.
+
 The **Vehicles** view joins each vehicle to its scalar record by a unique matching ES3 reference. Fuel is editable only when both `Liquid` and `LiquidCapacity` are valid and consistent; the save has no explicit unit label, so L follows the game's player-facing units as described by the user. Engine, radiator, and exhaust condition is shown only when its saved transform parent matches that vehicle's corresponding mount. The three verified wheel prefabs also appear when their unique parent matches a verified Vulture wheel hinge and both vehicle prefab identities agree. A separate vehicle-body damage/condition scalar was not found. Unresolved or ambiguous associations remain read-only with an explanation; the editor does not spawn, delete, or relink objects.
 
 ## Format and compatibility

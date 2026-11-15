@@ -318,7 +318,7 @@ function render() {
   }
   for (const [index, field] of doc.fields.entries()) {
     const itemOnly = field.section === "items" && itemFieldIds.has(field.id);
-    const group = itemOnly ? null : groupFor(field);
+    const group = itemOnly || field.id.startsWith("weaponsAmmoInGun.") ? null : groupFor(field);
     const row = document.createElement("div");
     row.className = "field";
     const label = document.createElement("label");
