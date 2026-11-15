@@ -1,27 +1,30 @@
 (function (root) {
   "use strict";
   const storageKey = "apocalypta-editor-ui";
-  const seasons = ["spring", "summer", "autumn", "winter"];
+  const palettes = ["wasteland", "desert", "nuclear-winter", "apocalypse"];
+  const legacyPalettes = { spring: "wasteland", summer: "desert", autumn: "apocalypse", winter: "nuclear-winter" };
 
   function load(storage, prefersDark) {
     const raw = storage.getItem(storageKey);
-    if (!raw) return { theme: "system", season: "spring", prefersDark, autosave: false, editableOnly: false };
+    if (!raw) return { theme: "system", palette: "wasteland", prefersDark, autosave: false, editableOnly: false, targets: null };
     const saved = JSON.parse(raw);
     return {
       theme: ["light", "dark"].includes(saved.theme) ? saved.theme : "system",
-      season: seasons.includes(saved.season) ? saved.season : "spring",
+      palette: palettes.includes(saved.palette) ? saved.palette : Object.hasOwn(legacyPalettes, saved.season) ? legacyPalettes[saved.season] : "wasteland",
       prefersDark,
       autosave: saved.autosave === true,
-      editableOnly: saved.editableOnly === true
+      editableOnly: saved.editableOnly === true,
+      targets: saved.targets === undefined ? null : saved.targets
     };
   }
 
   function save(storage, preferences) {
     storage.setItem(storageKey, JSON.stringify({
       theme: preferences.theme,
-      season: preferences.season,
+      palette: preferences.palette,
       autosave: preferences.autosave === true,
-      editableOnly: preferences.editableOnly === true
+      editableOnly: preferences.editableOnly === true,
+      targets: preferences.targets
     }));
   }
 
@@ -30,11 +33,11 @@
       ? (preferences.prefersDark ? "dark" : "light")
       : preferences.theme;
     element.dataset.theme = theme;
-    element.dataset.season = preferences.season;
+    element.dataset.palette = preferences.palette;
     return { theme };
   }
 
-  const api = { load, save, apply, storageKey, seasons };
+  const api = { load, save, apply, storageKey, palettes };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ApocalypterUi = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

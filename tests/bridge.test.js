@@ -55,6 +55,15 @@ test("run.bat serves the actual assets and authenticated latest/backup/autosave 
   assert.equal((await post("/api/latest", null, { "X-Editor-Token": "bad" })).status, 403);
   assert.equal((await post("/api/latest", null, { Origin: "http://evil.invalid" })).status, 403);
   assert.equal((await post("/api/latest", {})).status, 403);
+  assert.equal((await post("/api/targets", null, { "X-Editor-Token": "bad" })).status, 403);
+  assert.equal((await post("/api/targets", null, { Origin: "http://evil.invalid" })).status, 403);
+  assert.deepEqual((await (await post("/api/targets")).json()).targets,
+    { ammo: 999, consumables: 999, nuts: 900000, liquids: 100 });
+  const targets = { ammo: 321, consumables: 765, nuts: 12345, liquids: 25 };
+  assert.equal((await post("/api/targets", targets)).status, 200);
+  assert.equal((await post("/api/targets", { ...targets, ammo: -1 })).status, 409);
+  assert.deepEqual((await (await post("/api/targets")).json()).targets, targets);
+  assert.deepEqual(fs.readFileSync(path.join(root, "SaveGame1.es3")), original, "Target preferences never write game saves");
   assert.equal((await post("/api/latest?path=C:\\secret")).status, 200, "Query strings cannot supply paths");
   await new Promise((resolve, reject) => {
     const request = http.request(`${origin}/api/status`, { method: "POST", headers: { ...headers, Host: "localhost:" + port, "Content-Length": 0 } }, response => {

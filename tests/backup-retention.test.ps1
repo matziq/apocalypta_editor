@@ -26,6 +26,24 @@ function Prune($Source, $Limit) {
     return Invoke-BackupRetention $Source.Path $Limit $Source.LoadBackup $Source.LoadLength $Source.LoadHash
 }
 
+$targetsPath = Join-Path $Root "bulk-targets.json"
+$defaults = Read-BulkTargets $targetsPath
+Assert ($defaults.ammo -eq 999 -and $defaults.consumables -eq 999 -and $defaults.nuts -eq 900000 -and $defaults.liquids -eq 100) "Missing bulk targets must use documented defaults."
+$customTargets = [PSCustomObject]@{ ammo = 321; consumables = 765; nuts = 12345; liquids = 25 }
+Write-BulkTargets $targetsPath $customTargets
+$loadedTargets = Read-BulkTargets $targetsPath
+Assert ($loadedTargets.ammo -eq 321 -and $loadedTargets.consumables -eq 765 -and $loadedTargets.nuts -eq 12345 -and $loadedTargets.liquids -eq 25) "Bulk targets did not persist."
+foreach ($bad in @(
+    [PSCustomObject]@{ ammo = -1; consumables = 765; nuts = 12345; liquids = 25 },
+    [PSCustomObject]@{ ammo = 321; consumables = 0; nuts = 12345; liquids = 25 },
+    [PSCustomObject]@{ ammo = 321; consumables = 765; nuts = 1000001; liquids = 25 },
+    [PSCustomObject]@{ ammo = 321; consumables = 765; nuts = 12345; liquids = 101 }
+)) { Assert-Fails { Write-BulkTargets $targetsPath $bad } "whole number" }
+Assert ((Read-BulkTargets $targetsPath).ammo -eq 321) "Rejected settings must preserve previous targets."
+[IO.File]::WriteAllText($targetsPath, '{"ammo":999,"ammo":1,"consumables":999,"nuts":900000,"liquids":100}')
+Assert-Fails { Read-BulkTargets $targetsPath } "malformed"
+Write-BulkTargets $targetsPath $customTargets
+
 $settings = Join-Path $Root "settings.json"
 Assert ((Read-BackupLimit $settings) -eq 3) "Missing preferences must default to 3."
 foreach ($limit in @(0, 1, 2, 8, 9007199254740991)) {

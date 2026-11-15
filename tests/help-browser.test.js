@@ -285,8 +285,8 @@ test("long item lists expand in place, keep inline drafts through autosave, and 
       assert.equal(Number(await input.inputValue()), value + 1);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     }
-    for (const theme of ["light", "dark"]) for (const season of ["spring", "summer", "autumn", "winter"]) {
-      await page.evaluate(({ theme, season }) => { preferences.theme = theme; preferences.season = season; saveAppearance(); }, { theme, season });
+    for (const theme of ["light", "dark"]) for (const palette of ["wasteland", "desert", "nuclear-winter", "apocalypse"]) {
+      await page.evaluate(({ theme, palette }) => { preferences.theme = theme; preferences.palette = palette; saveAppearance(); }, { theme, palette });
       await page.locator("#item-editor input").first().focus();
       await page.locator("#item-editor .help-trigger").first().focus();
       assert.equal(await page.locator("#floating-help").isVisible(), true);
@@ -305,5 +305,99 @@ test("long item lists expand in place, keep inline drafts through autosave, and 
     assert.match(await page.locator("#item-action-status").innerText(), /staged 160.*160 unverified counters/);
     assert.equal(await page.locator("#item-editor").isVisible(), true);
     assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});
+
+test("bulk targets persist across native bridge origins and invalid settings never stage writes", browserOptions, async () => {
+  const { origin, fixture, token } = await syntheticBridge();
+  const pm = objs => ({ __type: "ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass", value: { objs } });
+  const target = path.join(fixture, "SaveGame1.es3");
+  fs.writeFileSync(target, JSON.stringify({
+    Ammo: pm({ armor: { __type: "float", value: 0 }, armorPlates: { __type: "int", value: 0 },
+      ammo_9mm: { __type: "int", value: 4 }, ammo_9mm_capacity: { __type: "int", value: 40 } }),
+    global: pm({ Money: { __type: "int", value: 42 } })
+  }));
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    page.on("dialog", dialog => dialog.accept());
+    const writes = [];
+    page.on("request", request => { if (request.url().endsWith("/api/save")) writes.push(request.url()); });
+    await page.goto(origin);
+    await page.waitForFunction(() => !!doc && !openingNative && targetsReady && !targetsBusy);
+    await page.locator("#autosave").check();
+    for (const [key, value] of Object.entries({ ammo: "999", consumables: "999", nuts: "900000", liquids: "100" })) {
+      await page.locator(`#target-${key}`).fill(value);
+    }
+    await page.locator("#apply-targets").click();
+    await page.waitForFunction(() => !targetsBusy && targetsReady);
+    assert.equal(writes.length, 0);
+    await page.locator("#autosave").uncheck();
+    await page.locator("#maximize-player").click();
+    assert.equal(await page.evaluate(() => changes.get("Ammo.ammo_9mm")), 999);
+    assert.equal(await page.evaluate(() => changes.has("Ammo.ammo_9mm_capacity")), false);
+    assert.equal(await page.evaluate(() => changes.has("Ammo.armor")), false);
+    await page.locator("#reset").click();
+    for (const [key, value] of Object.entries({ ammo: "321", consumables: "765", nuts: "12345", liquids: "25" })) {
+      await page.locator(`#target-${key}`).fill(value);
+    }
+    await page.locator("#apply-targets").click();
+    await page.waitForFunction(() => !targetsBusy && targetsReady && appliedTargets.ammo === 321);
+    assert.equal(await page.evaluate(() => changes.size), 0);
+    assert.equal(writes.length, 0);
+    const second = await browser.newPage();
+    await second.goto(process.env.APOCALYPTER_BROWSER_TEST_URL_ALT || origin);
+    await second.waitForFunction(() => !!doc && !openingNative && targetsReady && !targetsBusy);
+    for (const [key, value] of Object.entries({ ammo: "321", consumables: "765", nuts: "12345", liquids: "25" })) {
+      assert.equal(await second.locator(`#target-${key}`).inputValue(), value);
+    }
+    await second.locator("#target-liquids").fill("101");
+    await second.locator("#apply-targets").click();
+    await second.locator("#maximize-player").click();
+    assert.match(await second.locator("#target-status").innerText(), /liquids target/);
+    assert.equal(await second.evaluate(() => changes.size), 0);
+    await second.close();
+  } finally {
+    await browser.close();
+    const reset = await fetch(origin + "/api/targets", {
+      method: "POST", headers: { Origin: origin, "X-Editor-Token": token, "Content-Type": "application/json" },
+      body: JSON.stringify({ ammo: 999, consumables: 999, nuts: 900000, liquids: 100 })
+    });
+    assert.equal(reset.ok, true);
+  }
+});
+
+test("game-world palettes remain readable on desktop and mobile", browserOptions, async () => {
+  const { origin } = await syntheticBridge();
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.goto(origin);
+    await page.waitForFunction(() => !targetsBusy);
+    const seen = new Set();
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ["light", "dark"]) for (const palette of ["wasteland", "desert", "nuclear-winter", "apocalypse"]) {
+        await page.evaluate(({ theme, palette }) => { preferences.theme = theme; preferences.palette = palette; updateAppearance(); }, { theme, palette });
+        const values = await page.evaluate(() => {
+          const css = getComputedStyle(document.body);
+          const color = key => css.getPropertyValue(key).trim();
+          const luminance = hex => {
+            if (/^#[0-9a-f]{3}$/i.test(hex)) hex = "#" + [...hex.slice(1)].map(c => c + c).join("");
+            const values = hex.match(/[0-9a-f]{2}/gi).map(x => parseInt(x, 16) / 255).map(x => x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4);
+            return values[0] * 0.2126 + values[1] * 0.7152 + values[2] * 0.0722;
+          };
+          const contrast = (a, b) => { const x = luminance(a), y = luminance(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+          return { canvas: color("--canvas"), surface: color("--surface"),
+            body: contrast(color("--ink"), color("--canvas")), help: contrast(color("--ink"), color("--surface")),
+            muted: contrast(color("--muted"), color("--surface")), button: contrast(color("--button-text"), color("--accent")),
+            overflow: document.documentElement.scrollWidth > innerWidth };
+        });
+        assert.ok(values.body >= 4.5 && values.help >= 4.5 && values.muted >= 4.5 && values.button >= 4.5, `${theme}/${palette}: ${JSON.stringify(values)}`);
+        assert.equal(values.overflow, false, `${theme}/${palette}/${width}`);
+        if (width === 1440 && theme === "light") seen.add(values.canvas);
+      }
+    }
+    assert.equal(seen.size, 4, "Each world theme must use a distinct canvas color");
   } finally { await browser.close(); }
 });

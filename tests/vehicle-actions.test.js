@@ -89,7 +89,7 @@ test("trailer fuel fields are ignored even if supplied to a vehicle action", () 
 test("item maximization applies requested counts, skips invalid drafts and deduplicates targets", () => {
   const fields = [
     { id: "part:Condition", max: 100 }, { id: "can:Liquid", max: 5 }, { id: "part:Quantity", max: 2147483647 },
-    { id: "weaponsAmmoInGun.ammoakms", max: 2147483647, bulkTarget: 100 }, { id: "other:Condition", max: 100 }
+    { id: "weaponsAmmoInGun.ammoakms", max: 2147483647, topOffConsumable: true }, { id: "other:Condition", max: 100 }
   ];
   const items = [{ fieldIds: fields.slice(0, 3).map(field => field.id), readOnlyFields: [{}] }, { fieldIds: ["part:Condition", "other:Condition"], readOnlyFields: [] }];
   const drafts = new Map([
@@ -99,7 +99,7 @@ test("item maximization applies requested counts, skips invalid drafts and dedup
   ]);
   const updates = [];
   const result = Actions.maximizeItems(items, fields, field => drafts.get(field.id), (field, value) => updates.push([field.id, value]), () => {});
-  assert.deepEqual(updates, [["can:Liquid", 5], ["weaponsAmmoInGun.ammoakms", 100], ["other:Condition", 100]]);
+  assert.deepEqual(updates, [["can:Liquid", 5], ["weaponsAmmoInGun.ammoakms", 999], ["other:Condition", 100]]);
   assert.deepEqual(result, { staged: 3, skippedUnverified: 1, skippedInvalid: 1, readOnly: 1 });
 });
 

@@ -42,6 +42,52 @@ function Write-BackupLimit {
     } finally { if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) } }
 }
 
+function ConvertTo-BulkTargets {
+    param($Targets)
+    if ($null -eq $Targets -or @($Targets.PSObject.Properties.Name).Count -ne 4 -or
+        @($Targets.PSObject.Properties.Name | Where-Object { $_ -cnotin @("ammo", "consumables", "nuts", "liquids") }).Count) {
+        throw "Bulk targets require exactly ammo, consumables, nuts and liquids."
+    }
+    $result = @{}
+    foreach ($spec in @(@("ammo", 0, 2147483647), @("consumables", 1, 2147483647), @("nuts", 0, 1000000), @("liquids", 0, 100))) {
+        $name, $min, $max = $spec
+        $value = $Targets.$name
+        if (($value -isnot [int] -and $value -isnot [long]) -or $value -lt $min -or $value -gt $max) {
+            throw "$name target must be a whole number from $min to $max."
+        }
+        $result[$name] = [long]$value
+    }
+    return $result
+}
+
+function Read-BulkTargets {
+    param([string]$Path)
+    try { $file = Get-Item -LiteralPath $Path -Force -ErrorAction Stop }
+    catch [System.Management.Automation.ItemNotFoundException] { return @{ ammo = 999; consumables = 999; nuts = 900000; liquids = 100 } }
+    if ($file.Length -gt 4096 -or -not [Apocalypter.BackupFiles]::Fingerprint($file.FullName)) { throw "Bulk target settings must be a small regular file, not a directory or link." }
+    $text = [IO.File]::ReadAllText($file.FullName)
+    if ($text -cnotmatch '\A\{"ammo":(?:0|[1-9][0-9]*),"consumables":(?:0|[1-9][0-9]*),"nuts":(?:0|[1-9][0-9]*),"liquids":(?:0|[1-9][0-9]*)\}\z') {
+        throw "Bulk target settings are malformed."
+    }
+    return ConvertTo-BulkTargets ($text | ConvertFrom-Json)
+}
+
+function Write-BulkTargets {
+    param([string]$Path, $Targets)
+    $values = ConvertTo-BulkTargets $Targets
+    $directory = [IO.Path]::GetDirectoryName($Path)
+    [void][IO.Directory]::CreateDirectory($directory)
+    $temporary = Join-Path $directory (".apocalypter-targets-" + [Guid]::NewGuid().ToString("N") + ".tmp")
+    $text = '{"ammo":' + $values.ammo + ',"consumables":' + $values.consumables + ',"nuts":' + $values.nuts + ',"liquids":' + $values.liquids + '}'
+    try {
+        Write-NewSaveFile $temporary ([Text.Encoding]::UTF8.GetBytes($text))
+        if ([IO.File]::Exists($Path)) {
+            if (-not [Apocalypter.BackupFiles]::Fingerprint($Path)) { throw "Bulk target settings cannot replace a link." }
+            [IO.File]::Replace($temporary, $Path, [NullString]::Value)
+        } else { [IO.File]::Move($temporary, $Path) }
+    } finally { if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) } }
+}
+
 function Get-EditorBackups {
     param([string]$Path)
     $fullPath = [IO.Path]::GetFullPath($Path)

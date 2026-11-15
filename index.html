@@ -23,12 +23,12 @@ FORM: Familiar desktop utility, with an in-place before/after review instead of 
     <div><h1>Apocalypter <span>Save Editor</span></h1><p>A careful tune-up before the next expedition.</p></div>
     <div class="header-controls">
       <button id="save-top" type="button" disabled>Save</button>
-      <label class="season-control" for="season-select">Season
-        <select id="season-select" aria-label="Seasonal appearance">
-          <option value="spring">Spring</option>
-          <option value="summer">Summer</option>
-          <option value="autumn">Autumn</option>
-          <option value="winter">Winter</option>
+      <label class="palette-control" for="palette-select">World theme
+        <select id="palette-select" aria-label="World theme">
+          <option value="wasteland">Wasteland</option>
+          <option value="desert">Desert</option>
+          <option value="nuclear-winter">Nuclear Winter</option>
+          <option value="apocalypse">Apocalypse</option>
         </select>
       </label>
       <span class="theme-control"><button id="theme-toggle" type="button" aria-pressed="false">Use dark mode</button></span>
@@ -67,6 +67,19 @@ FORM: Familiar desktop utility, with an in-place before/after review instead of 
       <button id="backup" disabled>Download original backup</button>
       <button id="reset" disabled>Reset all changes</button>
       <p class="note">Only verified values on existing objects can change. Object references and unknown data stay untouched.</p>
+      <hr>
+      <h2>Bulk targets</h2>
+      <p>Apply targets before using Maximize all or Repair &amp; Top Off. Changing these settings does not edit a save.</p>
+      <label class="filter-label" for="target-ammo">Ammo count</label>
+      <input class="bulk-target" id="target-ammo" type="number" min="0" max="2147483647" step="1" required>
+      <label class="filter-label" for="target-consumables">Consumable count</label>
+      <input class="bulk-target" id="target-consumables" type="number" min="1" max="2147483647" step="1" required>
+      <label class="filter-label" for="target-nuts">Nuts</label>
+      <input class="bulk-target" id="target-nuts" type="number" min="0" max="1000000" step="1" required>
+      <label class="filter-label" for="target-liquids">Liquids (% of each capacity)</label>
+      <input class="bulk-target" id="target-liquids" type="number" min="0" max="100" step="1" required>
+      <button id="apply-targets" type="button">Apply bulk targets</button>
+      <p id="target-status" role="status" aria-live="polite"></p>
     </aside>
     <section class="workspace" aria-label="Save workspace">
       <div class="workspace-heading"><div><h2 id="filename">No save open</h2><p id="details">Choose a file to see its editable values.</p></div><span id="dirty"></span></div>

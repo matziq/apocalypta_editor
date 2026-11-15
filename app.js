@@ -31,13 +31,98 @@ let helpPinned = false;
 const saveButtons = ["save", "save-top", "save-side"];
 const themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
 let preferences;
+let preferencesLoadError = null;
 try {
   preferences = ApocalypterUi.load(localStorage, themeQuery.matches);
 } catch (error) {
-  preferences = { theme: "system", season: "spring", prefersDark: themeQuery.matches, autosave: false, editableOnly: false };
+  preferencesLoadError = error;
+  preferences = { theme: "system", palette: "wasteland", prefersDark: themeQuery.matches, autosave: false, editableOnly: false };
   $("appearance-status").textContent = `Appearance preferences could not be loaded: ${error.message}. Default appearance is active; file opening is still available.`;
 }
 const pickerToken = document.querySelector('meta[name="save-picker-token"]')?.content || "";
+const nativeTargets = !!pickerToken && location.protocol === "http:" && location.hostname === "127.0.0.1";
+const targetKeys = ["ammo", "consumables", "nuts", "liquids"];
+let targetsReady = !nativeTargets;
+let targetsBusy = nativeTargets;
+let appliedTargets = { ...ApocalypterVehicleActions.defaultTargets };
+
+function targetFeedback(text, error = false) {
+  $("target-status").textContent = text;
+  $("target-status").dataset.error = String(error);
+}
+function showTargets(targets) {
+  for (const key of targetKeys) $(`target-${key}`).value = targets?.[key] ?? "";
+}
+function readTargets() {
+  const targets = {};
+  for (const key of targetKeys) {
+    const raw = $(`target-${key}`).value.trim();
+    targets[key] = raw === "" ? NaN : Number(raw);
+  }
+  return ApocalypterVehicleActions.checkedTargets(targets);
+}
+function currentTargets() {
+  try {
+    if (targetsBusy || !targetsReady) throw new Error("Bulk targets are not loaded or saved. Apply valid targets before running a bulk action.");
+    const targets = readTargets();
+    if (targetKeys.some(key => targets[key] !== appliedTargets[key])) throw new Error("Apply the changed bulk targets before running a bulk action.");
+    return targets;
+  } catch (error) {
+    targetFeedback(error.message, true);
+    return null;
+  }
+}
+async function targetRequest(targets) {
+  const response = await fetch("/api/targets", {
+    method: "POST",
+    headers: { "X-Editor-Token": pickerToken, ...(targets ? { "Content-Type": "application/json" } : {}) },
+    ...(targets ? { body: JSON.stringify(targets) } : {})
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || `Bulk targets request failed (${response.status}).`);
+  return ApocalypterVehicleActions.checkedTargets(result.targets);
+}
+if (!nativeTargets && preferencesLoadError) {
+  targetsReady = false;
+  targetFeedback(`Bulk targets could not be loaded: ${preferencesLoadError.message} Enter and apply valid targets.`, true);
+} else if (!nativeTargets && preferences.targets !== null && preferences.targets !== undefined) {
+  try { appliedTargets = ApocalypterVehicleActions.checkedTargets(preferences.targets); }
+  catch (error) { targetsReady = false; targetFeedback(`${error.message} Enter and apply valid targets.`, true); }
+}
+showTargets(targetsReady ? appliedTargets : (nativeTargets || !preferences.targets ? appliedTargets : preferences.targets));
+if (nativeTargets) targetFeedback("Loading saved bulk targets...");
+for (const key of targetKeys) $(`target-${key}`).addEventListener("input", () => targetFeedback("Apply changed targets before using bulk actions."));
+$("apply-targets").addEventListener("click", async () => {
+  if (targetsBusy) return;
+  let next;
+  try { next = readTargets(); }
+  catch (error) { targetFeedback(error.message, true); return; }
+  targetsBusy = true;
+  $("apply-targets").disabled = true;
+  try {
+    if (nativeTargets) next = await targetRequest(next);
+    else {
+      const previous = preferences.targets;
+      preferences.targets = next;
+      try { ApocalypterUi.save(localStorage, preferences); }
+      catch (error) { preferences.targets = previous; throw error; }
+    }
+    appliedTargets = next;
+    targetsReady = true;
+    targetFeedback("Bulk targets saved. No save values were changed.");
+  } catch (error) { targetsReady = false; targetFeedback(`Could not save bulk targets: ${error.message}`, true); }
+  finally { targetsBusy = false; $("apply-targets").disabled = false; }
+});
+async function loadTargets() {
+  if (!nativeTargets) return;
+  try {
+    appliedTargets = await targetRequest();
+    showTargets(appliedTargets);
+    targetsReady = true;
+    targetFeedback("Saved bulk targets loaded.");
+  } catch (error) { targetsReady = false; targetFeedback(`Could not load bulk targets: ${error.message} Enter and apply valid targets.`, true); }
+  finally { targetsBusy = false; }
+}
 
 function hideHelp() {
   clearTimeout(helpCloseTimer);
@@ -106,7 +191,7 @@ function updateAppearance() {
   const result = ApocalypterUi.apply(document.body, preferences);
   $("theme-toggle").textContent = result.theme === "dark" ? "Use light mode" : "Use dark mode";
   $("theme-toggle").setAttribute("aria-pressed", String(result.theme === "dark"));
-  $("season-select").value = preferences.season;
+  $("palette-select").value = preferences.palette;
 }
 
 function saveAppearance() {
@@ -142,8 +227,8 @@ $("theme-toggle").addEventListener("click", () => {
   preferences.theme = isDark ? "light" : "dark";
   saveAppearance();
 });
-$("season-select").addEventListener("change", () => {
-  preferences.season = $("season-select").value;
+$("palette-select").addEventListener("change", () => {
+  preferences.palette = $("palette-select").value;
   saveAppearance();
 });
 
@@ -671,6 +756,8 @@ function updateVehicleActions() {
 
 function stageVehicleAction(action) {
   if (saving) return;
+  const targets = action === "topoff" ? currentTargets() : ApocalypterVehicleActions.defaultTargets;
+  if (!targets) return;
   const vehicle = selectedVehicle();
   const result = ApocalypterVehicleActions.stage(
     vehicle,
@@ -681,7 +768,8 @@ function stageVehicleAction(action) {
       return { value: input?.value, invalid: input?.getAttribute("aria-invalid") === "true" };
     },
     (field, value) => { inputs.get(field.id).value = value; },
-    ApocalypterSave.validate
+    ApocalypterSave.validate,
+    targets
   );
   refresh();
   $("vehicle-action-status").textContent = result.staged
@@ -859,6 +947,7 @@ async function openNative(latest = false) {
 }
 $("native-picker").addEventListener("click", () => openNative());
 window.addEventListener("DOMContentLoaded", () => {
+  void loadTargets();
   if (pickerToken && location.protocol === "http:" && location.hostname === "127.0.0.1") void openNative(true);
 });
 $("vehicle-select").addEventListener("change", updateVehicleActions);
@@ -871,27 +960,33 @@ function readDraft(field) {
 function writeDraft(field, value) { inputs.get(field.id).value = value; }
 $("maximize-player").addEventListener("click", () => {
   if (!doc || (saving && !savingAutomatically)) return;
+  const targets = currentTargets();
+  if (!targets) return;
   refresh();
-  const result = ApocalypterVehicleActions.maximize(doc.fields, readDraft, writeDraft, ApocalypterSave.validate);
+  const result = ApocalypterVehicleActions.maximize(doc.fields, readDraft, writeDraft, ApocalypterSave.validate, targets);
   refresh();
-  $("player-action-status").textContent = `Maximize all staged ${result.staged} values: health and supplies to 100; Nuts to 900,000; Hunger, Thirst, Fatigue and Radiation to 0. Armor, plates and read-only values were untouched.${result.skipped.length ? ` Could not set: ${result.skipped.join(", ")} (invalid draft or unsupported target).` : ""}`;
+  $("player-action-status").textContent = `Maximize all staged ${result.staged} values: health to 100, ammo to ${targets.ammo}, Nuts to ${targets.nuts}, and Hunger, Thirst, Fatigue and Radiation to 0. Armor, plates, capacities and read-only values were untouched.${result.skipped.length ? ` Could not set: ${result.skipped.join(", ")} (invalid draft or unsupported target).` : ""}`;
   requestAutosave();
 });
 $("maximize-items").addEventListener("click", () => {
   if (!doc || (saving && !savingAutomatically)) return;
+  const targets = currentTargets();
+  if (!targets) return;
   refresh();
-  const result = ApocalypterVehicleActions.maximizeItems(doc.items, doc.fields, readDraft, writeDraft, ApocalypterSave.validate);
+  const result = ApocalypterVehicleActions.maximizeItems(doc.items, doc.fields, readDraft, writeDraft, ApocalypterSave.validate, targets);
   refresh();
-  $("item-action-status").textContent = `Maximize all staged ${result.staged} values across all saved items, regardless of filters: conditions/liquids to verified limits, ammo and bandages to 100, repair kits to 999. Counters above those requested values are lowered. ${result.skippedUnverified} unverified counters and ${result.skippedInvalid} invalid target drafts skipped; ${result.readOnly} read-only values untouched.`;
+  $("item-action-status").textContent = `Maximize all staged ${result.staged} values across all saved items, regardless of filters: condition 100%, liquids ${targets.liquids}% of capacity, ammo ${targets.ammo}, consumables ${targets.consumables}. Higher values can be lowered. ${result.skippedUnverified} unverified counters and ${result.skippedInvalid} invalid target drafts skipped; ${result.readOnly} read-only values untouched.`;
   requestAutosave();
 });
 $("all-vehicles").addEventListener("click", () => {
   if (!doc || saving) return;
+  const targets = currentTargets();
+  if (!targets) return;
   refresh();
-  const result = ApocalypterVehicleActions.all(doc.vehicles, doc.fields, readDraft, writeDraft, ApocalypterSave.validate);
-  const consumables = ApocalypterVehicleActions.topOffConsumables(doc.fields, readDraft, writeDraft, ApocalypterSave.validate);
+  const result = ApocalypterVehicleActions.all(doc.vehicles, doc.fields, readDraft, writeDraft, ApocalypterSave.validate, targets);
+  const consumables = ApocalypterVehicleActions.topOffConsumables(doc.fields, readDraft, writeDraft, ApocalypterSave.validate, targets);
   refresh();
-  $("vehicle-action-status").textContent = `Staged ${result.staged} vehicle repair and liquid values and ${consumables.staged} verified consumable/Nuts values. Consumables target 999; Nuts target 900,000. ${result.missingRepair} vehicles had no verified repair target; ${result.missingFuel} had no verified fuel tank. ${result.skippedInvalid + consumables.skippedInvalid} invalid target drafts were left unchanged. Armor, plates, unknown counters and read-only values were untouched.`;
+  $("vehicle-action-status").textContent = `Staged ${result.staged} vehicle repair and liquid values and ${consumables.staged} verified consumable/Nuts values. Ammo ${targets.ammo}, consumables ${targets.consumables}, Nuts ${targets.nuts}, liquids ${targets.liquids}% of capacity. ${result.missingRepair} vehicles had no verified repair target; ${result.missingFuel} had no verified fuel tank. ${result.skippedInvalid + consumables.skippedInvalid} invalid target drafts were left unchanged. Armor, plates, unknown counters and read-only values were untouched.`;
   requestAutosave();
 });
 async function saveDocument(automatic = false) {
@@ -1005,15 +1100,15 @@ window.addEventListener("beforeunload", event => {
 });
 for (const [id, text] of [
   ["theme-toggle", "Changes only this editor's light/dark appearance. It does not change save data."],
-  ["season-select", "Selects this editor's seasonal color palette. It does not change the game's weather or season."],
+  ["palette-select", "Selects this editor's game-world color palette. It does not change the game or its weather."],
   ["autosave", "Consent to overwrite the exact native-opened file after each committed valid change, without a separate prompt. Your native backup limit applies; 0 means no recovery copy. Invalid drafts or backup cleanup errors pause saving; errors stop automatic retries. Turning it off keeps pending drafts."],
   ["backup-limit", "Persistent native limit per original save, default 3. Apply removes excess backups made in this editor's exact timestamp/GUID format, preserving the verified recovery point. 0 disables automatic backups and removes eligible existing copies; damaged or overwritten saves then have no automatic recovery. Other files use the limit on their next open/save. Downloaded/unrelated files and links are never pruned."],
   ["editable-only", "Shows only item instances with at least one currently editable field. Combines with text search; hidden items and their drafts are not deleted."],
-  ["maximize-player", "Stages health and supplies to 100, Nuts to 900,000, and Hunger, Thirst, Fatigue and Radiation to 0. Armor and plates are not changed. Values above these targets can be lowered. Read-only fields and invalid target drafts are skipped."],
-  ["maximize-items", "Stages verified conditions and liquids to their maximum, verified ammo and bandages to 100, repair kits to 999, and weapon-type loaded ammo to 100. These requested counts are not verified game maxima and can lower higher values or exceed normal capacities. Unverified counters, invalid drafts and read-only values are skipped."],
-  ["all-vehicles", "Stages verified vehicle repairs and liquid fills, verified consumable and ammunition counts (including flashlight battery packs) to 999, and Nuts to 900,000. Counts can exceed normal game limits or lower higher values. Armor, plates, unknown counters and invalid drafts are untouched."],
+  ["maximize-player", "Stages health to 100, carried ammo and Nuts to the applied bulk targets, and Hunger, Thirst, Fatigue and Radiation to 0. Armor, plates and ammo capacities are not changed."],
+  ["maximize-items", "Stages verified conditions to 100%, liquids to the applied percentage of capacity and verified ammo and consumable counts to their applied targets. Unknown counters and invalid drafts are skipped."],
+  ["all-vehicles", "Stages verified vehicle repairs, liquids to the applied percentage of capacity, verified ammo and consumable counts to their applied targets, and Nuts to the applied target. Armor, plates and unknown counters are untouched."],
   ["repair-vehicle", "Stages this selected vehicle's reference-matched component Condition values to 100%. It does not repair unlinked or stored spare parts."],
-  ["topoff-vehicle", "Stages this selected vehicle's fuel and verified mounted engine and radiator liquids to their capacities. Missing/invalid mappings and loose cargo are skipped."]
+  ["topoff-vehicle", "Stages this selected vehicle's fuel and verified mounted engine and radiator liquids to the applied percentage of capacity. Missing/invalid mappings and loose cargo are skipped."]
 ]) {
   const element = $(id);
   const container = document.createElement("span");

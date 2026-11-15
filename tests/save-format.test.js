@@ -526,12 +526,12 @@ test("item maximization includes name-keyed wheels and verified liquids without 
 test("bulk counts require exact item prefab and owner identity for bandages, repair kits and ammo", () => {
   const Actions = require("../vehicle-actions.js");
   for (const [name, prefabId, key, target] of [
-    ["bandage_1", "688495819279421776", "Quantity", 100],
+    ["bandage_1", "688495819279421776", "Quantity", 999],
     ["Repairbox_Small", "9121322384858893382", "Quantity", 999],
     ["Repairbox_Medium", "7600464120049698740", "Quantity", 999],
     ["Repairbox_Large", "4165647324065915868", "Quantity", 999],
-    ["ammo_box_762mm", "3377769854383720206", "ammo", 100],
-    ["ammo_box_big_arrow", "1625578815151821771", "ammo", 100]
+    ["ammo_box_762mm", "3377769854383720206", "ammo", 999],
+    ["ammo_box_big_arrow", "1625578815151821771", "ammo", 999]
   ]) {
     const root = prefabLiquidSave(name, prefabId);
     const record = root[`${name}(Clone)1`].value.objs;
@@ -542,7 +542,7 @@ test("bulk counts require exact item prefab and owner identity for bandages, rep
       (f, value) => { changes[f.id] = value; }, require("../save-format.js").validate);
     assert.equal(result.staged, 1, name);
     assert.equal(Object.values(changes)[0], target);
-    assert.equal(inspect(serialize(text, changes)).fields.find(f => f.bulkTarget === target).value, target);
+    assert.equal(inspect(serialize(text, changes)).fields.find(f => f.topOffConsumable).value, target);
     record.owner.es3Prefab.prefabId = "wrong";
     assert.equal(inspect(JSON.stringify(root)).fields.some(f => f.bulkTarget !== undefined), false);
     record.owner.es3Prefab.prefabId = prefabId;
@@ -631,7 +631,7 @@ test("battery pack editing refuses ambiguous identity and invalid counters witho
   assert.equal(serialize(text, {}), text);
 });
 
-test("battery pack counts support zero, existing positive values and signed-int bounds without changing Saved Items Maximize", () => {
+test("battery pack counts support zero, existing positive values and signed-int bounds in Saved Items Maximize", () => {
   for (const count of [0, 2, 2147483647]) {
     const root = prefabLiquidSave("flashlight_batteries", "6027655925999442117");
     delete root["flashlight_batteries(Clone)1"].value.objs.Liquid;
@@ -642,7 +642,7 @@ test("battery pack counts support zero, existing positive values and signed-int 
     const changes = {};
     require("../vehicle-actions.js").maximizeItems(doc.items, doc.fields, f => ({ value: f.value, invalid: false }),
       (f, value) => { changes[f.id] = value; }, require("../save-format.js").validate);
-    assert.deepEqual(changes, {});
+    assert.deepEqual(changes, { [field.id]: 999 });
     assert.equal(serialize(text, { [field.id]: 999 }), text.slice(0, field.start) + "999" + text.slice(field.end));
     assert.throws(() => serialize(text, { [field.id]: -1 }), /must be between/);
     assert.throws(() => serialize(text, { [field.id]: 2147483648 }), /must be between/);

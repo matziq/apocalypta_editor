@@ -86,6 +86,7 @@ function app({ stored = null, pickerResult, pickerError, native = true, confirm 
     clearTimeout: timers ? id => scheduled.delete(id) : clearTimeout,
     fetch: async (url, init) => {
       fetches.push({ url, init });
+      if (url === "/api/targets") return { ok: true, json: async () => ({ targets: init.body ? JSON.parse(init.body) : VehicleActions.defaultTargets }) };
       if (fetchResponse) return fetchResponse(url, init);
       if (url === "/api/status") return { ok: true, json: async () => ({ protocolVersion: 4, backupLimit: 3, folderExists: true, saveFolder: "C:\\Synthetic\\Apocalypter" }) };
       if (pickerError) throw pickerError;
@@ -174,7 +175,7 @@ const scalar = value => ({ __type: "float", value });
 const healthText = value => JSON.stringify({ Player: pm({ Health: scalar(value) }) });
 function nativeFixture(ui, text = healthText(100)) {
   vm.runInContext(`doc = ApocalypterSave.inspect(${JSON.stringify(text)}); originalBytes = new TextEncoder().encode(doc.text); fileName = "SaveGame1.es3";
-    nativeSource = { handle: "opaque", path: "C:\\\\Synthetic\\\\SaveGame1.es3", canSave: true, backupLimit: 3, backupPath: "C:\\\\Synthetic\\\\load.original.bak", modifiedUtc: "2026-01-01T00:00:00Z" }; render();`, ui.context);
+    nativeSource = { handle: "opaque", path: "C:\\\\Synthetic\\\\SaveGame1.es3", canSave: true, backupLimit: 3, backupPath: "C:\\\\Synthetic\\\\load.original.bak", modifiedUtc: "2026-01-01T00:00:00Z" }; targetsReady = true; targetsBusy = false; render();`, ui.context);
 }
 function draft(ui, id) { return vm.runInContext(`inputs.get(${JSON.stringify(id)})`, ui.context); }
 function deferred() {
@@ -199,7 +200,7 @@ test("native startup autoload adopts backed-up source; standalone startup never 
   } } });
   ui.windowEvents.DOMContentLoaded();
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(ui.fetches.map(request => request.url), ["/api/status", "/api/latest"]);
+  assert.deepEqual(ui.fetches.map(request => request.url), ["/api/targets", "/api/status", "/api/latest"]);
   assert.equal(vm.runInContext("nativeSource.handle", ui.context), "opened");
   assert.match(ui.elements.get("source-status").textContent, /SaveGame2.*original\.bak/);
   assert.equal(ui.elements.get("autosave").checked, false);
@@ -460,10 +461,73 @@ test("player bulk action is one coherent autosave, sets exact values, and preser
   ui.elements.get("maximize-player").events.click();
   await ui.flushTimers();
   assert.equal(ui.fetches.length, 1);
-  assert.deepEqual(payload.changes, { "Player.Health": 100, "Ammo.ammo_9mm": 100, "global.Hunger": 0, "global.Thirst": 0, "global.Fatigue": 0, "global.Radiation": 0, "global.Money": 900000 });
+  assert.deepEqual(payload.changes, { "Player.Health": 100, "Ammo.ammo_9mm": 999, "global.Hunger": 0, "global.Thirst": 0, "global.Fatigue": 0, "global.Radiation": 0, "global.Money": 900000 });
   assert.equal(vm.runInContext("doc.fields.find(field => field.id === 'global.Money').value", ui.context), 900000);
   assert.equal(vm.runInContext("doc.fields.find(field => field.id === 'Ammo.armor').value", ui.context), 5);
   assert.equal(vm.runInContext("changes.size", ui.context), 0);
+});
+
+test("configured targets apply across bulk entry points, preserve armor and capacity, and survive browser relaunch", async () => {
+  const ui = app({ native: false });
+  seedWorldItems(ui, true);
+  const root = JSON.parse(ui.context.worldText);
+  root.Ammo = pm({ armor: scalar(0), armorPlates: { __type: "int", value: 0 },
+    ammo_9mm: { __type: "int", value: 2 }, ammo_9mm_capacity: { __type: "int", value: 40 } });
+  root.global = pm({ Money: { __type: "int", value: 3 } });
+  root["engine(Clone)2"].value.objs.Liquid = scalar(6);
+  root["engine(Clone)2"].value.objs.LiquidCapacity = scalar(8);
+  const prefab = { prefabId: "3955095449936337101" };
+  root.newGOArray_Items.value.array.push({ name: "first_aid_1(Clone)8", _ES3Ref: "aid", es3Prefab: prefab });
+  root["first_aid_1(Clone)8"] = pm({ owner: { _ES3Ref: "aid", es3Prefab: prefab }, Quantity: { __type: "int", value: 3 } });
+  const box = { prefabId: "3733066396143753576" };
+  root.newGOArray_Items.value.array.push({ name: "ammo_box_9mm(Clone)9", _ES3Ref: "box", es3Prefab: box });
+  root["ammo_box_9mm(Clone)9"] = pm({ owner: { _ES3Ref: "box", es3Prefab: box }, ammo: { __type: "int", value: 4 } });
+  const text = JSON.stringify(root);
+  nativeFixture(ui, text);
+  for (const [key, value] of Object.entries({ ammo: 321, consumables: 765, nuts: 12345, liquids: 25 })) ui.elements.get(`target-${key}`).value = value;
+  assert.equal(vm.runInContext("changes.size", ui.context), 0);
+  ui.elements.get("maximize-player").events.click();
+  assert.equal(vm.runInContext("changes.size", ui.context), 0);
+  assert.match(ui.elements.get("target-status").textContent, /Apply/);
+  await ui.elements.get("apply-targets").events.click();
+  assert.equal(vm.runInContext("changes.size", ui.context), 0);
+  ui.elements.get("maximize-player").events.click();
+  assert.equal(draft(ui, "Ammo.ammo_9mm").value, "321");
+  assert.equal(draft(ui, "global.Money").value, "12345");
+  assert.equal(draft(ui, "Ammo.armor").value, "0");
+  assert.equal(draft(ui, "Ammo.ammo_9mm_capacity").value, "40");
+  vm.runInContext("render()", ui.context);
+  ui.elements.get("maximize-items").events.click();
+  assert.equal(draft(ui, "item:aid:3:Quantity").value, "765");
+  assert.equal(draft(ui, "item:box:4:ammo").value, "321");
+  assert.equal(draft(ui, "item:9001:1:Liquid").value, "2");
+  vm.runInContext("render()", ui.context);
+  ui.elements.get("all-vehicles").events.click();
+  assert.equal(draft(ui, "vehicle:car-1:0:fuel").value, "5");
+  assert.equal(draft(ui, "Ammo.ammo_9mm").value, "321");
+  assert.equal(draft(ui, "item:aid:3:Quantity").value, "765");
+  assert.equal(draft(ui, "item:box:4:ammo").value, "321");
+  assert.equal(draft(ui, "global.Money").value, "12345");
+  assert.equal(draft(ui, "Ammo.armor").value, "0");
+  const relaunched = app({ native: false, stored: ui.stored() });
+  assert.deepEqual(["ammo", "consumables", "nuts", "liquids"].map(key => relaunched.elements.get(`target-${key}`).value), ["321", "765", "12345", "25"]);
+});
+
+test("invalid or unapplied bulk settings cannot stage any save writes", async () => {
+  const ui = app({ native: false, timers: true });
+  nativeFixture(ui, JSON.stringify({ Ammo: pm({ ammo_9mm: { __type: "int", value: 5 } }), global: pm({ Money: { __type: "int", value: 2 } }) }));
+  ui.elements.get("autosave").checked = true; ui.elements.get("autosave").events.change();
+  for (const bad of ["", "-1", "1.5", "101"]) {
+    ui.elements.get("target-liquids").value = bad;
+    await ui.elements.get("apply-targets").events.click();
+    ui.elements.get("maximize-player").events.click();
+    ui.elements.get("maximize-items").events.click();
+    ui.elements.get("all-vehicles").events.click();
+    await ui.flushTimers();
+    assert.equal(vm.runInContext("changes.size", ui.context), 0);
+    assert.equal(ui.fetches.length, 0);
+    assert.match(ui.elements.get("target-status").textContent, /liquids target/);
+  }
 });
 
 test("Saved Items omits the weapon-type section without changing carried supplies or saved counters", () => {
@@ -861,7 +925,7 @@ test("Saved items Maximize all includes hidden and mounted targets in a single a
   ui.elements.get("maximize-items").events.click();
   await ui.flushTimers();
   assert.equal(ui.fetches.length, 1);
-  assert.deepEqual(payload.changes, { "item:9000:0:Condition": 100, "item:9001:1:Condition": 100, "item:9001:1:Liquid": 5, "weaponsAmmoInGun.ammoakms": 100 });
+  assert.deepEqual(payload.changes, { "item:9000:0:Condition": 100, "item:9001:1:Condition": 100, "item:9001:1:Liquid": 5, "weaponsAmmoInGun.ammoakms": 999 });
   assert.match(ui.elements.get("item-action-status").textContent, /staged 4.*2 unverified counters and 0 invalid/);
   assert.equal(vm.runInContext("changes.size", ui.context), 0);
   assert.equal(ui.elements.get("item-filter").value, "wheel");
@@ -891,14 +955,14 @@ test("item batch stages verified requested counts, preserves invalid drafts and 
   ui.elements.get("maximize-items").events.click();
   await ui.flushTimers();
   assert.equal(ui.fetches.length, 0, "invalid draft blocks autosave of all staged changes");
-  assert.equal(draft(ui, "item:new-0:3:Quantity").value, "100");
+  assert.equal(draft(ui, "item:new-0:3:Quantity").value, "999");
   assert.equal(draft(ui, "item:new-1:4:Quantity").value, "999");
   assert.equal(draft(ui, "item:new-2:5:ammo").value, "");
   assert.match(ui.elements.get("item-action-status").textContent, /1 invalid target drafts skipped/);
   await commitInput(ui, "item:new-2:5:ammo", 100);
   await ui.flushTimers();
   assert.equal(ui.fetches.length, 1);
-  assert.equal(payload.changes["item:new-0:3:Quantity"], 100);
+  assert.equal(payload.changes["item:new-0:3:Quantity"], 999);
   assert.equal(payload.changes["item:new-1:4:Quantity"], 999);
   assert.equal(payload.changes["item:new-2:5:ammo"], 100);
 });
