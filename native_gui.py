@@ -46,11 +46,17 @@ class ToolTip:
 
 
 class EditorGUI(tk.Tk):
-    def __init__(self, settings_file=None, legacy_dir=None, *, startup_path=None, discover_latest=True):
+    def __init__(self, settings_file=None, legacy_dir=None, *, startup_path=None, discover_latest=True,
+                 start_zoomed=False):
         super().__init__()
         self.title("Apocalypter Save Editor")
         self.geometry("1280x720")
         self.minsize(720, 480)
+        if start_zoomed:
+            try:
+                self.state("zoomed")
+            except tk.TclError:
+                pass
         self.storage = EditorStorage(
             Path(settings_file) if settings_file else preferences.settings_path(),
             Path(legacy_dir) if legacy_dir else Path(os.environ.get("LOCALAPPDATA", "")) / "ApocalypterSaveEditor",
@@ -965,9 +971,12 @@ def main():
         if len(sys.argv) == 3 and sys.argv[1] == "--smoke-test":
             path = Path(sys.argv[2])
             app = EditorGUI(path.parent / "smoke-settings.json", path.parent / "smoke-legacy",
-                            discover_latest=False)
+                            discover_latest=False, start_zoomed=True)
+            zoomed = app.state() == "zoomed"
             app.withdraw()
             try:
+                if not zoomed:
+                    raise ValueError("The smoke-test window did not start maximized.")
                 source = app.storage.open(path)
                 app.model = EditorModel(source.content)
                 for task in ("Player & Supplies", "Vehicles", "Saved Items", "Item Map", "Settings"):
@@ -984,7 +993,7 @@ def main():
         except (AttributeError, OSError):
             ctypes.windll.user32.SetProcessDPIAware()
     try:
-        app = EditorGUI()
+        app = EditorGUI(start_zoomed=True)
     except (OSError, UnicodeError, ValueError) as exc:
         root = tk._default_root or tk.Tk()
         root.withdraw()

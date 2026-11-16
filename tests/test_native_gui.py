@@ -1,12 +1,14 @@
 import json
+import sys
 import tempfile
+import tkinter as tk
 import tkinter.font as tkfont
 import unittest
 from pathlib import Path
 from tkinter import ttk
 from unittest.mock import patch
 
-from native_gui import EditorGUI
+from native_gui import EditorGUI, main
 from native_theme import PALETTES, THEME_LABELS
 from test_es3_items import fixture
 from test_es3_scalars import GAME
@@ -34,6 +36,92 @@ class NativeGuiTests(unittest.TestCase):
                 return widget
             widgets.extend(widget.winfo_children())
         raise AssertionError(f"Missing widget: {widget_class}")
+
+    def test_only_normal_entry_point_requests_maximized_start(self):
+        with patch.object(sys, "argv", ["native_gui.py"]), \
+                patch("native_gui.ctypes.windll") as windows, \
+                patch("native_gui.EditorGUI") as editor:
+            main()
+        windows.shcore.SetProcessDpiAwareness.assert_called_once_with(1)
+        editor.assert_called_once_with(start_zoomed=True)
+        editor.return_value.mainloop.assert_called_once_with()
+
+    def test_startup_zoom_is_opt_in_and_falls_back_to_fixed_geometry(self):
+        calls = []
+
+        def unavailable_zoom(app, value=None):
+            if value == "zoomed":
+                calls.append(app.winfo_ismapped())
+                raise tk.TclError("zoom unavailable")
+            return tk.Tk.state(app, value)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(EditorGUI, "state", unavailable_zoom):
+                app = EditorGUI(root / "settings.json", root / "legacy", discover_latest=False)
+                app.withdraw()
+                try:
+                    self.assertEqual(calls, [])
+                finally:
+                    app.destroy()
+                app = EditorGUI(root / "settings.json", root / "legacy", discover_latest=False,
+                                start_zoomed=True)
+                app.withdraw()
+                try:
+                    self.assertEqual(len(calls), 1)
+                    self.assertEqual(calls[0], 0)
+                    app.update_idletasks()
+                    self.assertTrue(app.geometry().startswith("1280x720"))
+                finally:
+                    app.destroy()
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows maximized window behavior")
+    def test_maximized_large_font_layout_matches_manually_maximized_window(self):
+        original_init = tk.Tk.__init__
+
+        def transparent_init(app, *args, **kwargs):
+            original_init(app, *args, **kwargs)
+            app.attributes("-alpha", 0.0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "SaveGame1.es3"
+            original = GAME.encode("utf-8")
+            path.write_bytes(original)
+            measurements = []
+            with patch.object(tk.Tk, "__init__", transparent_init):
+                for start_zoomed in (False, True):
+                    app = EditorGUI(root / f"settings-{start_zoomed}.json", root / "legacy",
+                                    startup_path=path, discover_latest=False, start_zoomed=start_zoomed)
+                    try:
+                        if app.winfo_screenwidth() < 1920 or app.winfo_screenheight() < 1080:
+                            self.skipTest("Requires a screen of at least 1920x1080")
+                        if not start_zoomed:
+                            app.state("zoomed")
+                        app.update()
+                        self.assertEqual(app.state(), "zoomed")
+                        app._base_font_sizes["TkDefaultFont"] = 16
+                        results = []
+                        for size in (80, 140):
+                            app.settings["fontSize"] = size
+                            app._theme()
+                            app.update()
+                            tree = app.tree
+                            rowheight = int(ttk.Style(app).lookup("Treeview", "rowheight"))
+                            linespace = tkfont.nametofont("TkDefaultFont", root=app).metrics("linespace")
+                            rows = [row for group in tree.get_children()
+                                    for row in (group, *tree.get_children(group)) if tree.bbox(row)]
+                            self.assertGreaterEqual(len(rows), 3)
+                            self.assertGreaterEqual(rowheight, linespace + 6)
+                            self.assertEqual(app.outer_canvas.xview(), (0.0, 1.0))
+                            self.assertEqual(tree.xview(), (0.0, 1.0))
+                            results.append((app.winfo_width(), app.winfo_height(),
+                                            tree.winfo_width(), tree.winfo_height(), rowheight, len(rows)))
+                        measurements.append(results)
+                    finally:
+                        app.destroy()
+            self.assertEqual(measurements[0], measurements[1])
+            self.assertEqual(path.read_bytes(), original)
 
     def test_synthetic_open_drafts_bulk_save_and_preferences(self):
         with tempfile.TemporaryDirectory() as directory:
