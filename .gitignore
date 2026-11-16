@@ -3,3 +3,9 @@ node_modules/
 *.bak
 *.log
 coverage/
+build/
+dist/
+.venv/
+__pycache__/
+*.py[cod]
+editor_settings.json

@@ -1,0 +1,583 @@
+{
+  "test_synthetic_trees_match_existing_javascript_parser": [
+    {
+      "tree": {
+        "kind": "object",
+        "props": {
+          "name": {
+            "kind": "string",
+            "value": "\ud83d\ude80"
+          },
+          "field": {
+            "kind": "object",
+            "props": {
+              "__type": {
+                "kind": "string",
+                "value": "float"
+              }
+            },
+            "implicit": {
+              "kind": "number",
+              "value": 100
+            }
+          },
+          "ref": {
+            "kind": "number",
+            "value": 9005913460443801000
+          }
+        }
+      }
+    },
+    {
+      "tree": {
+        "kind": "object",
+        "props": {
+          "settings": {
+            "kind": "object",
+            "props": {
+              "__type": {
+                "kind": "string",
+                "value": "bool"
+              },
+              "value": {
+                "kind": "boolean",
+                "value": false
+              }
+            }
+          },
+          "unknown": {
+            "kind": "array",
+            "items": [
+              {
+                "kind": "null",
+                "value": null
+              },
+              {
+                "kind": "boolean",
+                "value": true
+              },
+              {
+                "kind": "string",
+                "value": "escaped\nstring"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "tree": {
+        "kind": "object",
+        "props": {
+          "values": {
+            "kind": "array",
+            "items": [
+              {
+                "kind": "number",
+                "value": -3
+              },
+              {
+                "kind": "number",
+                "value": 0.001
+              },
+              {
+                "kind": "object",
+                "props": {
+                  "nested": {
+                    "kind": "object",
+                    "props": {
+                      "__type": {
+                        "kind": "string",
+                        "value": "int"
+                      }
+                    },
+                    "implicit": {
+                      "kind": "number",
+                      "value": 42
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "error": true
+    },
+    {
+      "error": true
+    },
+    {
+      "error": true
+    }
+  ],
+  "test_partial_item_shapes_match_javascript_safely": [
+    {
+      "fields": {
+        "item:r2:1:ammo": [
+          14,
+          0,
+          2147483647,
+          true
+        ],
+        "item:r4:3:Condition": [
+          50,
+          0,
+          100,
+          false
+        ],
+        "item:r4:3:Liquid": [
+          2,
+          0,
+          6,
+          false
+        ],
+        "item:r5:4:Quantity": [
+          5,
+          1,
+          2147483647,
+          false
+        ],
+        "item:wheel-ref:5:Condition": [
+          55,
+          0,
+          100,
+          false
+        ]
+      },
+      "readonly": {
+        "item:r1:0": [
+          {
+            "name": "Quantity",
+            "value": 0,
+            "reason": "This saved value does not meet the supported type or range; it is preserved unchanged."
+          }
+        ],
+        "item:r2:1": [],
+        "item:r3:2": [],
+        "item:r4:3": [],
+        "item:r5:4": [],
+        "item:wheel-ref:5": []
+      }
+    },
+    {
+      "fields": {
+        "item:r2:1:ammo": [
+          14,
+          0,
+          2147483647,
+          true
+        ],
+        "item:r4:3:Condition": [
+          50,
+          0,
+          100,
+          false
+        ],
+        "item:r4:3:Liquid": [
+          2,
+          0,
+          6,
+          false
+        ],
+        "item:r5:4:Quantity": [
+          5,
+          1,
+          2147483647,
+          false
+        ],
+        "item:wheel-ref:5:Condition": [
+          55,
+          0,
+          100,
+          false
+        ]
+      },
+      "readonly": {
+        "item:r1:0": [
+          {
+            "name": "Quantity",
+            "value": 1.5,
+            "reason": "This saved value does not meet the supported type or range; it is preserved unchanged."
+          }
+        ],
+        "item:r2:1": [],
+        "item:r3:2": [],
+        "item:r4:3": [],
+        "item:r5:4": [],
+        "item:wheel-ref:5": []
+      }
+    },
+    {
+      "fields": {
+        "item:r1:0:Quantity": [
+          7,
+          1,
+          2147483647,
+          true
+        ],
+        "item:r4:3:Condition": [
+          50,
+          0,
+          100,
+          false
+        ],
+        "item:r4:3:Liquid": [
+          2,
+          0,
+          6,
+          false
+        ],
+        "item:r5:4:Quantity": [
+          5,
+          1,
+          2147483647,
+          false
+        ],
+        "item:wheel-ref:5:Condition": [
+          55,
+          0,
+          100,
+          false
+        ]
+      },
+      "readonly": {
+        "item:r1:0": [],
+        "item:r2:1": [
+          {
+            "name": "ammo",
+            "value": -1,
+            "reason": "This saved value does not meet the supported type or range; it is preserved unchanged."
+          }
+        ],
+        "item:r3:2": [],
+        "item:r4:3": [],
+        "item:r5:4": [],
+        "item:wheel-ref:5": []
+      }
+    },
+    {
+      "fields": {
+        "item:r1:0:Quantity": [
+          7,
+          1,
+          2147483647,
+          true
+        ],
+        "item:r2:1:ammo": [
+          14,
+          0,
+          2147483647,
+          true
+        ],
+        "item:r4:3:Liquid": [
+          2,
+          0,
+          6,
+          false
+        ],
+        "item:r5:4:Quantity": [
+          5,
+          1,
+          2147483647,
+          false
+        ],
+        "item:wheel-ref:5:Condition": [
+          55,
+          0,
+          100,
+          false
+        ]
+      },
+      "readonly": {
+        "item:r1:0": [],
+        "item:r2:1": [],
+        "item:r3:2": [],
+        "item:r4:3": [
+          {
+            "name": "Condition",
+            "value": 101,
+            "reason": "This saved value does not meet the supported type or range; it is preserved unchanged."
+          }
+        ],
+        "item:r5:4": [],
+        "item:wheel-ref:5": []
+      }
+    },
+    {
+      "fields": {
+        "item:r1:0:Quantity": [
+          7,
+          1,
+          2147483647,
+          true
+        ],
+        "item:r2:1:ammo": [
+          14,
+          0,
+          2147483647,
+          true
+        ],
+        "item:r4:3:Condition": [
+          50,
+          0,
+          100,
+          false
+        ],
+        "item:r5:4:Quantity": [
+          5,
+          1,
+          2147483647,
+          false
+        ],
+        "item:wheel-ref:5:Condition": [
+          55,
+          0,
+          100,
+          false
+        ]
+      },
+      "readonly": {
+        "item:r1:0": [],
+        "item:r2:1": [],
+        "item:r3:2": [],
+        "item:r4:3": [
+          {
+            "name": "Liquid",
+            "value": 7,
+            "reason": "No valid saved capacity or exact verified prefab capacity supports this amount; no capacity or units are guessed."
+          }
+        ],
+        "item:r5:4": [],
+        "item:wheel-ref:5": []
+      }
+    },
+    {
+      "fields": {
+        "item:r2:1:ammo": [
+          14,
+          0,
+          2147483647,
+          true
+        ],
+        "item:r4:3:Condition": [
+          50,
+          0,
+          100,
+          false
+        ],
+        "item:r4:3:Liquid": [
+          2,
+          0,
+          6,
+          false
+        ],
+        "item:r5:4:Quantity": [
+          5,
+          1,
+          2147483647,
+          false
+        ],
+        "item:wheel-ref:5:Condition": [
+          55,
+          0,
+          100,
+          false
+        ]
+      },
+      "readonly": {
+        "item:r1:0": [],
+        "item:r2:1": [],
+        "item:r3:2": [],
+        "item:r4:3": [],
+        "item:r5:4": [],
+        "item:wheel-ref:5": []
+      }
+    },
+    {
+      "fields": {
+        "item:r4:3:Condition": [
+          50,
+          0,
+          100,
+          false
+        ],
+        "item:r4:3:Liquid": [
+          2,
+          0,
+          6,
+          false
+        ],
+        "item:r5:4:Quantity": [
+          5,
+          1,
+          2147483647,
+          false
+        ],
+        "item:wheel-ref:5:Condition": [
+          55,
+          0,
+          100,
+          false
+        ]
+      },
+      "readonly": {
+        "item:r1:0": [],
+        "item:r1:1": [],
+        "item:r3:2": [],
+        "item:r4:3": [],
+        "item:r5:4": [],
+        "item:wheel-ref:5": []
+      }
+    }
+  ],
+  "test_verified_fields_match_js_and_bad_battery_is_readonly": {
+    "item:r1:0:Quantity": [
+      7,
+      1,
+      2147483647,
+      true
+    ],
+    "item:r2:1:ammo": [
+      14,
+      0,
+      2147483647,
+      true
+    ],
+    "item:r4:3:Condition": [
+      50,
+      0,
+      100,
+      false
+    ],
+    "item:r4:3:Liquid": [
+      2,
+      0,
+      6,
+      false
+    ],
+    "item:r5:4:Quantity": [
+      5,
+      1,
+      2147483647,
+      false
+    ],
+    "item:wheel-ref:5:Condition": [
+      55,
+      0,
+      100,
+      false
+    ]
+  },
+  "test_out_of_range_ambiguous_values_remain_readonly": [],
+  "test_synthetic_item_and_weapon_edits_match_javascript_bytes": "{\n \"Player\": {\n  \"__type\": \"ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass\",\n  \"value\": {\n   \"objs\": {\n    \"Health\": {\n     \"__type\": \"float\",\n     \"value\": 100\n    }\n   }\n  }\n },\n \"bandage_1(Clone)1\": {\n  \"__type\": \"ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass\",\n  \"value\": {\n   \"objs\": {\n    \"owner\": {\n     \"__type\": \"GameObject\",\n     \"_ES3Ref\": \"r1\",\n     \"transformID\": \"t0\",\n     \"name\": \"bandage_1(Clone)1\",\n     \"es3Prefab\": {\n      \"prefabId\": \"688495819279421776\"\n     },\n     \"components\": [\n      {\n       \"__type\": \"Transform\",\n       \"_ES3Ref\": \"t0\",\n       \"goID\": \"r1\",\n       \"parent\": null,\n       \"localPosition\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"z\": 0\n       }\n      }\n     ]\n    },\n    \"Quantity\": {\n     \"__type\": \"int\",\n     \"value\": 999\n    }\n   }\n  }\n },\n \"ammo_box_12gauge(Clone)2\": {\n  \"__type\": \"ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass\",\n  \"value\": {\n   \"objs\": {\n    \"owner\": {\n     \"__type\": \"GameObject\",\n     \"_ES3Ref\": \"r2\",\n     \"transformID\": \"t1\",\n     \"name\": \"ammo_box_12gauge(Clone)2\",\n     \"es3Prefab\": {\n      \"prefabId\": \"8519476287603981168\"\n     },\n     \"components\": [\n      {\n       \"__type\": \"Transform\",\n       \"_ES3Ref\": \"t1\",\n       \"goID\": \"r2\",\n       \"parent\": null,\n       \"localPosition\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"z\": 0\n       }\n      }\n     ]\n    },\n    \"ammo\": {\n     \"__type\": \"int\",\n     \"value\": 14\n    }\n   }\n  }\n },\n \"flashlight_batteries(Clone)3\": {\n  \"__type\": \"ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass\",\n  \"value\": {\n   \"objs\": {\n    \"owner\": {\n     \"__type\": \"GameObject\",\n     \"_ES3Ref\": \"r3\",\n     \"transformID\": \"t2\",\n     \"name\": \"flashlight_batteries(Clone)3\",\n     \"es3Prefab\": {\n      \"prefabId\": \"6027655925999442117\"\n     },\n     \"components\": [\n      {\n       \"__type\": \"Transform\",\n       \"_ES3Ref\": \"t2\",\n       \"goID\": \"r3\",\n       \"parent\": null,\n       \"localPosition\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"z\": 0\n       }\n      }\n     ]\n    },\n    \"batteries\": {\n     \"__type\": \"string\",\n     \"value\": \"bad\"\n    }\n   }\n  }\n },\n \"radiator_small(Clone)4\": {\n  \"__type\": \"ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass\",\n  \"value\": {\n   \"objs\": {\n    \"owner\": {\n     \"__type\": \"GameObject\",\n     \"_ES3Ref\": \"r4\",\n     \"transformID\": \"t3\",\n     \"name\": \"radiator_small(Clone)4\",\n     \"es3Prefab\": {\n      \"prefabId\": \"5669857674379848146\"\n     },\n     \"components\": [\n      {\n       \"__type\": \"Transform\",\n       \"_ES3Ref\": \"t3\",\n       \"goID\": \"r4\",\n       \"parent\": null,\n       \"localPosition\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"z\": 0\n       }\n      }\n     ]\n    },\n    \"Liquid\": {\n     \"__type\": \"float\",\n     \"value\": 3\n    },\n    \"Condition\": {\n     \"__type\": \"float\",\n     \"value\": 100\n    }\n   }\n  }\n },\n \"mystery(Clone)5\": {\n  \"__type\": \"ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass\",\n  \"value\": {\n   \"objs\": {\n    \"owner\": {\n     \"__type\": \"GameObject\",\n     \"_ES3Ref\": \"r5\",\n     \"transformID\": \"t4\",\n     \"name\": \"mystery(Clone)5\",\n     \"es3Prefab\": {\n      \"prefabId\": \"688495819279421776\"\n     },\n     \"components\": [\n      {\n       \"__type\": \"Transform\",\n       \"_ES3Ref\": \"t4\",\n       \"goID\": \"r5\",\n       \"parent\": null,\n       \"localPosition\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"z\": 0\n       }\n      }\n     ]\n    },\n    \"Quantity\": {\n     \"__type\": \"int\",\n     \"value\": 5\n    }\n   }\n  }\n },\n \"small_wheel_3(Clone)6\": {\n  \"__type\": \"System.Object\",\n  \"value\": {\n   \"__type\": \"float\",\n   \"value\": 55\n  }\n },\n \"newGOArray_Items\": {\n  \"__type\": \"ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass\",\n  \"value\": {\n   \"array\": [\n    {\n     \"__type\": \"GameObject\",\n     \"_ES3Ref\": \"r1\",\n     \"transformID\": \"t0\",\n     \"name\": \"bandage_1(Clone)1\",\n     \"es3Prefab\": {\n      \"prefabId\": \"688495819279421776\"\n     },\n     \"components\": [\n      {\n       \"__type\": \"Transform\",\n       \"_ES3Ref\": \"t0\",\n       \"goID\": \"r1\",\n       \"parent\": null,\n       \"localPosition\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"z\": 0\n       }\n      }\n     ]\n    },\n    {\n     \"__type\": \"GameObject\",\n     \"_ES3Ref\": \"r2\",\n     \"transformID\": \"t1\",\n     \"name\": \"ammo_box_12gauge(Clone)2\",\n     \"es3Prefab\": {\n      \"prefabId\": \"8519476287603981168\"\n     },\n     \"components\": [\n      {\n       \"__type\": \"Transform\",\n       \"_ES3Ref\": \"t1\",\n       \"goID\": \"r2\",\n       \"parent\": null,\n       \"localPosition\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"z\": 0\n       }\n      }\n     ]\n    },\n    {\n     \"__type\": \"GameObject\",\n     \"_ES3Ref\": \"r3\",\n     \"transformID\": \"t2\",\n     \"name\": \"flashlight_batteries(Clone)3\",\n     \"es3Prefab\": {\n      \"prefabId\": \"6027655925999442117\"\n     },\n     \"components\": [\n      {\n       \"__type\": \"Transform\",\n       \"_ES3Ref\": \"t2\",\n       \"goID\": \"r3\",\n       \"parent\": null,\n       \"localPosition\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"z\": 0\n       }\n      }\n     ]\n    },\n    {\n     \"__type\": \"GameObject\",\n     \"_ES3Ref\": \"r4\",\n     \"transformID\": \"t3\",\n     \"name\": \"radiator_small(Clone)4\",\n     \"es3Prefab\": {\n      \"prefabId\": \"5669857674379848146\"\n     },\n     \"components\": [\n      {\n       \"__type\": \"Transform\",\n       \"_ES3Ref\": \"t3\",\n       \"goID\": \"r4\",\n       \"parent\": null,\n       \"localPosition\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"z\": 0\n       }\n      }\n     ]\n    },\n    {\n     \"__type\": \"GameObject\",\n     \"_ES3Ref\": \"r5\",\n     \"transformID\": \"t4\",\n     \"name\": \"mystery(Clone)5\",\n     \"es3Prefab\": {\n      \"prefabId\": \"688495819279421776\"\n     },\n     \"components\": [\n      {\n       \"__type\": \"Transform\",\n       \"_ES3Ref\": \"t4\",\n       \"goID\": \"r5\",\n       \"parent\": null,\n       \"localPosition\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"z\": 0\n       }\n      }\n     ]\n    },\n    {\n     \"__type\": \"GameObject\",\n     \"_ES3Ref\": \"wheel-ref\",\n     \"transformID\": \"wheel-transform\",\n     \"name\": \"small_wheel_3(Clone)6\",\n     \"es3Prefab\": {\n      \"prefabId\": \"2321790605670812229\"\n     },\n     \"components\": [\n      {\n       \"__type\": \"Transform\",\n       \"_ES3Ref\": \"wheel-transform\",\n       \"goID\": \"wheel-ref\",\n       \"parent\": null,\n       \"localPosition\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"z\": 0\n       }\n      }\n     ]\n    }\n   ]\n  }\n },\n \"weaponsAmmoInGun\": {\n  \"__type\": \"ES3PlayMaker.PMDataWrapper,Assembly-CSharp-firstpass\",\n  \"value\": {\n   \"objs\": {\n    \"ammoslamberg500\": {\n     \"__type\": \"int\",\n     \"value\": 999\n    }\n   }\n  }\n }\n}\r\n",
+  "test_matched_mounts_and_trailer_fuel_match_js": {
+    "vehicle:car:0": [
+      "item:part:0:Condition",
+      "item:part:0:Liquid",
+      "vehicle:car:0:fuel"
+    ],
+    "vehicle:trailer:1": []
+  },
+  "test_world_positions_match_js_and_unresolved_are_not_plotted": {
+    "player": {
+      "x": 10,
+      "y": 2,
+      "z": 20
+    },
+    "items": [
+      {
+        "x": 100,
+        "y": 0,
+        "z": 200
+      },
+      {
+        "x": 100,
+        "y": 0,
+        "z": 198
+      },
+      {
+        "x": 100,
+        "y": 0,
+        "z": 198
+      },
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "test_confirmed_slots_and_nested_container_locations_match_js": [
+    "User-identified Bandage slot",
+    "User-identified First Aid Kit slot",
+    "User-identified Weapon slot 1",
+    "User-identified Weapon slot 2",
+    "User-identified Weapon slot 3",
+    "User-identified Flashlight slot (L)",
+    "User-identified Body armor slot",
+    "User-identified Backpack slot",
+    "User-identified Binoculars slot",
+    "User-identified trailer container (saved parent link)",
+    "User-identified trailer container (saved parent link)",
+    "User-identified box in vehicle trunk (saved parent link)"
+  ],
+  "test_bulk_actions_match_javascript_on_synthetic_records": {
+    "player": {
+      "result": {
+        "staged": 4,
+        "skipped": []
+      },
+      "writes": {
+        "Player.Health": 100,
+        "Ammo.ammo_22caliber_capacity": 777,
+        "global.Money": 12345,
+        "global.Hunger": 0
+      }
+    },
+    "consumables": {
+      "result": {
+        "staged": 4,
+        "skippedInvalid": 0
+      },
+      "writes": {
+        "Ammo.ammo_22caliber_capacity": 777,
+        "global.Money": 12345,
+        "item:1:Quantity": 555,
+        "item:2:ammo": 777
+      }
+    },
+    "vehicles": {
+      "result": {
+        "staged": 2,
+        "skippedInvalid": 0,
+        "missingRepair": 1,
+        "missingFuel": 0
+      },
+      "writes": {
+        "vehicle:1:Condition": 100,
+        "vehicle:1:fuel": 10
+      }
+    },
+    "items": {
+      "result": {
+        "staged": 4,
+        "skippedUnverified": 0,
+        "skippedInvalid": 0,
+        "readOnly": 1
+      },
+      "writes": {
+        "item:1:Quantity": 555,
+        "item:2:ammo": 777,
+        "item:3:Liquid": 6.5,
+        "item:4:Condition": 100
+      }
+    }
+  }
+}
