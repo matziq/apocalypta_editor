@@ -83,6 +83,10 @@ class WorldTransforms:
             records.append((player_ref, player_id, player_transform))
         owners = Counter(ref for ref, _, _ in records if isinstance(ref, str))
         ids = Counter(identifier for _, identifier, _ in records if isinstance(identifier, str))
+        self.saved_transform_ids = set(ids) | {
+            identifier for _, _, transform in records
+            if isinstance(identifier := _value(at(transform, "_ES3Ref")), str)
+        }
         self.transforms = {
             identifier: transform
             for ref, identifier, transform in records
@@ -92,6 +96,8 @@ class WorldTransforms:
             and owners.get(ref) == 1 and ids.get(identifier) == 1
         }
         self.player_transform = player_transform
+        self.player_id = (player_id if player_transform is not None and isinstance(player_id, str)
+                          and self.transforms.get(player_id) is player_transform else None)
         self.known_slots = (
             KNOWN_SLOTS if player_transform is not None and player_ref == "4908172907895950466"
             and player_id == "9005913460443800891"
@@ -99,6 +105,21 @@ class WorldTransforms:
         )
         self.ref_counts = Counter(obj.ref for obj in self.items + self.cars if obj.ref is not None)
         self.parent_counts = Counter(obj.parent_ref for obj in self.items if obj.parent_ref)
+        player_refs = at(player, "es3Prefab", "refs")
+        self.player_parent_refs = {self.player_id} if self.player_id else set()
+        if self.player_id and player_refs is not None and player_refs.kind == "object":
+            ref_owners = Counter()
+            for record in [player] + [obj.object for obj in self.items + self.cars]:
+                refs = at(record, "es3Prefab", "refs")
+                if refs is not None and refs.kind == "object":
+                    ref_owners.update(node.value for node in refs.props.values()
+                                      if node.kind == "string" and node.value)
+            self.player_parent_refs.update(
+                node.value for node in player_refs.props.values()
+                if node.kind == "string" and node.value and ref_owners[node.value] == 1
+                and node.value not in self.saved_transform_ids
+                and node.value not in self.ref_counts
+            )
         self.containers = {}
         for car in self.cars:
             prefab = _value(at(car.object, "es3Prefab", "prefabId"))
@@ -167,6 +188,7 @@ class WorldTransforms:
     def identified_location(self, obj: SavedObject) -> str | None:
         if obj.ref is None or self.ref_counts[obj.ref] != 1:
             return None
+
         slot = self.known_slots.get(obj.parent_ref)
         if slot:
             requires_zero = obj.parent_ref in ("6374689825314962276", "9124196666788711796")
@@ -182,3 +204,30 @@ class WorldTransforms:
             visited.add(parent)
             parent = _value(at(self.transforms.get(parent), "parent", "_ES3Ref"))
         return None
+
+    def belongs_to_player(self, obj: SavedObject) -> bool:
+        """Require an unambiguous saved parent chain, never proximity or name."""
+        visited = set()
+        while obj.transform_id not in visited:
+            if (not isinstance(obj.ref, str) or self.ref_counts[obj.ref] != 1
+                    or not isinstance(obj.transform_id, str)
+                    or self.transforms.get(obj.transform_id) is not obj.transform
+                    or obj.parent_state != "linked"):
+                return False
+            visited.add(obj.transform_id)
+            if obj.parent_ref in self.transforms and obj.parent_ref != self.player_id:
+                parent = next((item for item in self.items
+                               if item.transform_id == obj.parent_ref
+                               and self.transforms.get(item.transform_id) is item.transform), None)
+                if parent is None:
+                    return False
+                obj = parent
+                continue
+            if obj.parent_ref in self.saved_transform_ids and obj.parent_ref != self.player_id:
+                return False
+            if obj.parent_ref in self.known_slots:
+                return bool(self.identified_location(obj))
+            if obj.parent_ref in self.player_parent_refs:
+                return True
+            return False
+        return False

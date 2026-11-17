@@ -707,7 +707,9 @@ class NativeGuiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             path = root / "SaveGame1.es3"
-            original = synthetic_save().encode("utf-8")
+            data = json.loads(synthetic_save())
+            data["Player"]["value"]["objs"]["Player"]["components"][0]["localPosition"]["x"] = 2
+            original = json.dumps(data).encode("utf-8")
             path.write_bytes(original)
             app = EditorGUI(root / "settings.json", root / "legacy", startup_path=path, discover_latest=False)
             app.withdraw()
@@ -720,6 +722,12 @@ class NativeGuiTests(unittest.TestCase):
                 self.assertEqual(rows["zero(Clone)3"], "100.00 / 198.00")
                 self.assertEqual(rows["missing(Clone)4"], "Unresolved")
                 self.assertEqual(rows["malformed(Clone)5"], "Unresolved")
+                app.tk.call(tree.heading("position", "command"))
+                self.assertEqual(tree.get_children()[0], "player")
+                self.assertEqual(tree.set(tree.get_children()[-1], "position"), "Unresolved")
+                app.tk.call(tree.heading("position", "command"))
+                self.assertNotEqual(tree.get_children()[0], "player")
+                self.assertEqual(tree.set(tree.get_children()[-1], "position"), "Unresolved")
                 self.assertEqual(app.model.changes(), {})
                 self.assertEqual(path.read_bytes(), original)
             finally:
@@ -767,6 +775,61 @@ class NativeGuiTests(unittest.TestCase):
                 self.assertEqual(app.filter_var.get(), "")
                 self.assertEqual(app.model.changes(), {})
                 self.assertEqual(path.read_bytes(), original)
+            finally:
+                app.destroy()
+
+    def test_map_sort_filter_coordinates_and_player_highlights(self):
+        data = json.loads(synthetic_save())
+        items = data["newGOArray_Items"]["value"]["array"]
+        items[0]["components"][0]["parent"] = {"_ES3Ref": "pt"}
+        original = json.dumps(data).encode("utf-8")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "SaveGame1.es3"
+            path.write_bytes(original)
+            app = EditorGUI(root / "settings.json", root / "legacy", startup_path=path, discover_latest=False)
+            app.withdraw()
+            try:
+                app.update()
+                app.show_task("Item Map")
+                app.update()
+                tree = self.descendant(app.task_frame, "Treeview")
+                self.assertIn("player", tree.item("player", "tags"))
+                for key in ("0", "1", "2"):
+                    self.assertIn("player-owned", tree.item(key, "tags"))
+                self.assertFalse(tree.item("3", "tags"))
+                app.tk.call(tree.heading("#0", "command"))
+                names = [tree.item(key, "text").casefold() for key in tree.get_children()]
+                self.assertEqual(names, sorted(names))
+                app.tk.call(tree.heading("#0", "command"))
+                self.assertEqual([tree.item(key, "text").casefold() for key in tree.get_children()],
+                                 list(reversed(names)))
+                search = self.descendant(app.task_frame, "TEntry")
+                search.insert(0, "player-owned")
+                self.assertEqual(set(tree.get_children()), {"0", "1", "2"})
+                toggle = self.descendant(app.task_frame, "TCheckbutton")
+                toggle.invoke()
+                app.update()
+                self.assertEqual(tree.get_children(), ())
+                toggle.invoke()
+                app.update()
+                self.assertEqual(set(tree.get_children()), {"0", "1", "2"})
+                search.delete(0, "end")
+                toggle.invoke()
+                app.update()
+                self.assertEqual(tree.get_children(), ("player",))
+                tree.selection_set("player")
+                app.update()
+                self.assertIn("disabled", self.button(app, "Show in Saved Items").state())
+                for world, label in THEME_LABELS.items():
+                    for dark in (False, True):
+                        app.theme_var.set(label)
+                        app.dark_var.set(dark)
+                        app.set_appearance()
+                        self.assertEqual(str(tree.tag_configure("player", "background")), app.colors["accent"])
+                        self.assertEqual(str(tree.tag_configure("player-owned", "foreground")), app.colors["ink"])
+                self.assertEqual(path.read_bytes(), original)
+                self.assertEqual(app.model.changes(), {})
             finally:
                 app.destroy()
 

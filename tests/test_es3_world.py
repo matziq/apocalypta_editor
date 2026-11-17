@@ -116,6 +116,8 @@ class WorldTests(unittest.TestCase):
         self.assertEqual(actual[-3], "User-identified trailer container (saved parent link)")
         self.assertEqual(actual[-2], "User-identified trailer container (saved parent link)")
         self.assertEqual(actual[-1], "User-identified box in vehicle trunk (saved parent link)")
+        self.assertEqual([world.belongs_to_player(item) for item in world.items],
+                         [True] * 9 + [False] * 3)
 
         self.assertEqual(actual, javascript_result(self._testMethodName))
 
@@ -130,6 +132,48 @@ class WorldTests(unittest.TestCase):
         world = WorldTransforms(parse(text))
         self.assertEqual(world.known_slots, {})
         self.assertIsNone(world.identified_location(world.items[0]))
+
+    def test_player_ownership_requires_unambiguous_parent_evidence(self):
+        data = json.loads(synthetic_save())
+        player = data["Player"]["value"]["objs"]["Player"]
+        player.update(_ES3Ref="4908172907895950466", transformID="9005913460443800891")
+        player["components"][0].update(_ES3Ref=player["transformID"], goID=player["_ES3Ref"])
+        player["es3Prefab"] = {"refs": {"inventory": "inventory-parent"}}
+        items = [
+            game_object("backpack", "bag", "bag-t", "5762072836280993281"),
+            game_object("inside", "inside", "inside-t", "bag-t"),
+            game_object("inventory", "inv", "inv-t", "inventory-parent"),
+            game_object("direct", "direct", "direct-t", player["transformID"]),
+            game_object("Bandage", "bandage", "bandage-t", "6374689825314962276"),
+            game_object("distant Bandage", "distant", "distant-t", "6374689825314962276"),
+            game_object("backpack", "loose", "loose-t"),
+            game_object("cycle", "cycle", "cycle-t", "cycle-t"),
+            game_object("duplicate", "dup", "dup1", player["transformID"]),
+            game_object("duplicate", "dup", "dup2", player["transformID"]),
+        ]
+        items[5]["components"][0]["localPosition"]["x"] = 20
+        data["newGOArray_Items"]["value"]["array"] = items
+        world = WorldTransforms(parse(json.dumps(data)))
+        self.assertEqual([world.belongs_to_player(item) for item in world.items],
+                         [True, True, True, True, True, False, False, False, False, False])
+        player["es3Prefab"]["refs"]["collision"] = "ambiguous"
+        items.extend([
+            game_object("parent1", "p1", "ambiguous"),
+            game_object("parent2", "p2", "ambiguous"),
+            game_object("false inventory", "false", "false-t", "ambiguous"),
+        ])
+        world = WorldTransforms(parse(json.dumps(data)))
+        self.assertNotIn("ambiguous", world.player_parent_refs)
+        self.assertFalse(world.belongs_to_player(world.items[-1]))
+        items[-2]["transformID"] = "broken"
+        player["es3Prefab"]["refs"]["invalid"] = "broken"
+        items[-1]["components"][0]["parent"]["_ES3Ref"] = "broken"
+        world = WorldTransforms(parse(json.dumps(data)))
+        self.assertNotIn("broken", world.player_parent_refs)
+        self.assertFalse(world.belongs_to_player(world.items[-1]))
+        player["components"] = []
+        world = WorldTransforms(parse(json.dumps(data)))
+        self.assertFalse(any(world.belongs_to_player(item) for item in world.items))
 
 
 if __name__ == "__main__":
