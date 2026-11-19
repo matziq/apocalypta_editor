@@ -4,7 +4,7 @@ A native Windows editor for Apocalypter's text-based Easy Save 3 / ES3PlayMaker 
 
 ## Quick start (standalone)
 
-1. Close Apocalypter and download `ApocalypterSaveEditor.exe` from the v2.0.2 or later GitHub release. No Python or browser is needed.
+1. Close Apocalypter and download `ApocalypterSaveEditor.exe` from the v2.0.3 or later GitHub release. No Python or browser is needed.
 2. Start the exe. It opens the newest numbered `SaveGameN.es3` in `%USERPROFILE%\AppData\LocalLow\SawyerK Games\Apocalypter`, or use **Browse...** to choose a slot or `SaveSettings.es3`. Autoload excludes settings, backups, and exported copies.
 3. Choose a task, select a row, and edit its supported values. Hover over controls or rows for help; use **Quick start help** for a short walkthrough.
 4. Choose **Save changes**, check the displayed destination, and confirm the overwrite. Alternatively, explicitly enable **Autosave on change** or use **More actions** to review, reset, or export drafts. Exports require a new filename and never replace an existing file.
@@ -71,6 +71,7 @@ Every write validates the edits and checks the source hash for external changes,
 - **Vehicles:** repair verified mounted components or top off verified fuel and uniquely mounted liquids; trailers are never treated as fuel tanks. **Repair & Top Off All** also applies configured targets to verified player and item consumables, even when there are no vehicles.
 - **Saved Items:** search and group existing instances, inspect their locations and read-only values, and edit verified fields. **Editable only** persists across launches. **Maximize All** also applies to filtered-out items. Unknown or ambiguous values are skipped.
 - **Item Map:** inspect a read-only world X/Z coordinate plot and distances from the saved player. Click list headers to sort (coordinates sort numerically), filter by saved name/type/tag/location, or enable **Only items with coordinates**. The player and items linked to the player through verified equipment slots, inventory references, or nested saved parents are highlighted; names and proximity never imply ownership. Select a marker or list entry and use **Show in Saved Items** to inspect it. Filters affect the list, not the plot; clicking a hidden marker clears the filters to reveal its row. It is not a calibrated image of the in-game map; unresolved positions are listed but not plotted.
+  Use **Zoom in** and **Zoom out** to change the scale. The first zoom in from the full map centers on the selected row if it has coordinates. **Zoom to player** centers a close-up on the saved player and is unavailable if the player's position cannot be resolved. **Fit map** restores the full extent. Zoom changes the plot only, not the list or the save.
 - **Settings:** edit verified settings present in the opened file. Settings in different files are not synchronized.
 
 **Bulk targets** defaults to Ammo **999**, Consumables **999**, Nuts **900,000**, and Liquids **100%** of each verified capacity. Ammo accepts 0–2,147,483,647; consumables 1–2,147,483,647; Nuts 0–1,000,000; liquid percentages 0–100. The ammo target includes 22-caliber, 9mm, 20-gauge, and arrow capacities, but excludes unrelated capacities and armor. Flashlight battery packs use the ammo target. Food items without saved stack counts are unchanged. Changing targets alone never changes a save.

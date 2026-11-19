@@ -116,6 +116,7 @@ class EditorGUI(tk.Tk):
         self.shell = shell
         self.shell_window = self.outer_canvas.create_window(0, 0, window=shell, anchor="nw")
         self.outer_canvas.bind("<Configure>", self._resize_shell)
+        shell.bind("<Configure>", self._resize_map_shell)
         shell.columnconfigure(0, weight=1)
         shell.rowconfigure(3, weight=1)
         setup = ttk.LabelFrame(shell, text="Setup", padding=8)
@@ -223,8 +224,14 @@ class EditorGUI(tk.Tk):
             return
         width = max(self.outer_canvas.winfo_width(), self.shell.winfo_reqwidth())
         height = max(self.outer_canvas.winfo_height(), round(680 * self.settings["fontSize"] / 100))
+        if self.active_task == "Item Map" and self.model is not None:
+            height = max(height, self.shell.winfo_reqheight())
         self.outer_canvas.itemconfigure(self.shell_window, width=width, height=height)
         self.outer_canvas.configure(scrollregion=(0, 0, width, height))
+
+    def _resize_map_shell(self, _event):
+        if self.active_task == "Item Map":
+            self._schedule_resize()
 
     def _backup_warning(self):
         self.warning_var.set("Backups off: saving overwrites the original." if self.settings["backupLimit"] == 0 else "")
@@ -474,6 +481,7 @@ class EditorGUI(tk.Tk):
         content.columnconfigure(0, weight=1)
         content.rowconfigure(1, weight=1)
         if task == "Item Map":
+            content.bind("<Configure>", self._resize_map_shell)
             self._map_view(content)
             return
         toolbar = ttk.Frame(content)
@@ -858,13 +866,24 @@ class EditorGUI(tk.Tk):
         positioned = [(item, world.position(item.object.transform)) for item in objects]
         resolved = [(item, point) for item, point in positioned if point is not None]
         player = world.position(world.player_transform)
-        summary = tk.StringVar(value=f"{len(resolved)} items resolved; {len(objects) - len(resolved)} unresolved. "
-                                   + ("Player position resolved." if player else "Player position unresolved."))
-        ttk.Label(parent, textvariable=summary).grid(row=0, column=0, sticky="w")
+        summary = (f"{len(resolved)} items resolved; {len(objects) - len(resolved)} unresolved. "
+                   + ("Player position resolved." if player else "Player position unresolved; zoom unavailable."))
+        ttk.Label(parent, text=summary).grid(row=0, column=0, sticky="w")
+        points = [point for _, point in resolved] + ([player] if player is not None else [])
+        # Normalize before subtracting so even opposite near-limit coordinates cannot overflow.
+        unit = max((abs(point[axis]) for point in points for axis in ("x", "z")), default=1.0)
+        unit = max(unit, 1.0)
+        bounds = [tuple(point[axis] / unit for axis in ("x", "z")) for point in points]
+        xs, zs = zip(*bounds) if bounds else ((0.0,), (0.0,))
+        span_x, span_z = max(xs) - min(xs), max(zs) - min(zs)
+        fit_center = (min(xs) + span_x / 2, min(zs) + span_z / 2)
+        zoom_level = 0
+        zoom_center = fit_center
+        player_view = False
         map_panes = ttk.Panedwindow(parent, orient="horizontal")
         parent.rowconfigure(1, weight=0)
-        parent.rowconfigure(2, weight=1)
-        map_panes.grid(row=2, column=0, sticky="nsew", pady=8)
+        parent.rowconfigure(3, weight=1)
+        map_panes.grid(row=3, column=0, sticky="nsew", pady=8)
         plot = ttk.Frame(map_panes)
         listing = ttk.Frame(map_panes)
         map_panes.add(plot, weight=3)
@@ -878,7 +897,7 @@ class EditorGUI(tk.Tk):
         self.map_canvas = canvas
         canvas.grid(row=0, column=0, sticky="nsew")
         selected = tk.StringVar(value="Select a plotted point to inspect it.")
-        ttk.Label(parent, textvariable=selected, wraplength=950).grid(row=3, column=0, sticky="w")
+        ttk.Label(parent, textvariable=selected, wraplength=950).grid(row=4, column=0, sticky="w")
         tree = ttk.Treeview(listing, columns=("position",), show="tree headings")
         query = tk.StringVar()
         coordinates_only = tk.BooleanVar(value=False)
@@ -893,6 +912,41 @@ class EditorGUI(tk.Tk):
         ToolTip(search, "Filter the list by saved name, type, tag, or location.")
         ttk.Label(controls, text="Player and player-owned items are highlighted.").grid(
             row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        zoom_bar = ttk.Frame(parent)
+        zoom_bar.grid(row=2, column=0, sticky="w", pady=(8, 0))
+
+        def fit_map():
+            nonlocal zoom_level, zoom_center, player_view
+            zoom_level, zoom_center, player_view = 0, fit_center, False
+            draw()
+
+        def zoom(step):
+            nonlocal zoom_level, zoom_center
+            if zoom_level + step == 0:
+                fit_map()
+                return
+            if zoom_level == 0:
+                row = rows.get(str(selected_index["value"]))
+                if row is not None and row[1] is not None:
+                    zoom_center = (row[1]["x"] / unit, row[1]["z"] / unit)
+            zoom_level = max(0, min(6, zoom_level + step))
+            draw()
+
+        def zoom_to_player():
+            nonlocal zoom_level, zoom_center, player_view
+            if player is not None:
+                zoom_level, player_view = 3, True
+                zoom_center = (player["x"] / unit, player["z"] / unit)
+                draw()
+
+        zoom_in = ttk.Button(zoom_bar, text="Zoom in", command=lambda: zoom(1))
+        zoom_out = ttk.Button(zoom_bar, text="Zoom out", command=lambda: zoom(-1))
+        fit_button = ttk.Button(zoom_bar, text="Fit map", command=fit_map)
+        player_button = ttk.Button(zoom_bar, text="Zoom to player", command=zoom_to_player)
+        for button in (zoom_in, zoom_out, fit_button, player_button):
+            button.pack(side="left", padx=(0, 5))
+        if player is None:
+            player_button.state(["disabled"])
         tree.configure(columns=("position", "location"), selectmode="browse")
         tree.column("#0", minwidth=100, width=180)
         tree.column("position", minwidth=90, width=150)
@@ -987,7 +1041,7 @@ class EditorGUI(tk.Tk):
 
         show_button = ttk.Button(parent, text="Show in Saved Items", style="Select.TButton",
                                  command=show_item, state="disabled")
-        show_button.grid(row=4, column=0, sticky="w", pady=(6, 0))
+        show_button.grid(row=5, column=0, sticky="w", pady=(6, 0))
 
         def select_item(index):
             selected_index["value"] = index
@@ -1009,37 +1063,56 @@ class EditorGUI(tk.Tk):
             tree.see(str(index))
             select_item(index)
 
+        def select_marker(_event):
+            tag = canvas.gettags("current")[0]
+            select_from_plot("player" if tag == "player" else int(tag.removeprefix("item")))
+
         tree.bind("<<TreeviewSelect>>", select_from_list)
+        canvas.tag_bind("map-marker", "<Button-1>", select_marker)
+
         def draw(_event=None):
+            zoom_in.state(["!disabled"] if points and zoom_level < 6 else ["disabled"])
+            zoom_out.state(["!disabled"] if zoom_level else ["disabled"])
+            fit_button.state(["!disabled"] if zoom_level else ["disabled"])
             tree.tag_configure("player", background=self.colors["accent"], foreground=self.colors["entry"])
             tree.tag_configure("player-owned", background=self.colors["head"], foreground=self.colors["ink"])
             canvas.delete("all")
-            points = [point for _, point in resolved] + ([player] if player else [])
             if not points:
                 canvas.create_text(20, 20, anchor="nw", text="No positions can be resolved.",
                                    fill=self.colors["ink"])
                 return
-            width, height = max(80, canvas.winfo_width()), max(80, canvas.winfo_height())
-            xs, zs = [p["x"] for p in points], [p["z"] for p in points]
-            minx, maxx, minz, maxz = min(xs), max(xs), min(zs), max(zs)
-            scale = min((width - 40) / max(maxx - minx, 1), (height - 40) / max(maxz - minz, 1))
+            width, height = canvas.winfo_width(), canvas.winfo_height()
+            usable_width, usable_height = max(1, width - 40), max(1, height - 40)
+            short_side = min(usable_width, usable_height)
+            span = max(span_x * (short_side / usable_width),
+                       span_z * (short_side / usable_height), 1 / unit)
+            if player_view:
+                span = min(span, 1280 / unit)
+            span /= 2 ** zoom_level
+
             def screen(p):
-                return 20 + (p["x"] - minx) * scale, height - 20 - (p["z"] - minz) * scale
-            for index, (item, point) in enumerate(positioned):
-                if point is None:
+                dx = (p["x"] / unit - zoom_center[0]) / span
+                dz = (p["z"] / unit - zoom_center[1]) / span
+                if abs(dx) <= width / (2 * short_side) and abs(dz) <= height / (2 * short_side):
+                    return width / 2 + dx * short_side, height / 2 - dz * short_side
+                return None
+
+            for index, (_, point) in enumerate(positioned):
+                position = screen(point) if point is not None else None
+                if position is None:
                     continue
-                x, y = screen(point)
+                x, y = position
                 tag = f"item{index}"
                 canvas.create_oval(x-4, y-4, x+4, y+4, fill=self.colors["accent"],
                                    outline=self.colors["ink"],
-                                   width=3 if selected_index["value"] == index else 1, tags=(tag,))
-                canvas.tag_bind(tag, "<Button-1>", lambda _event, i=index: select_from_plot(i))
-            if player:
-                x, y = screen(player)
+                                   width=3 if selected_index["value"] == index else 1,
+                                   tags=(tag, "map-marker"))
+            position = screen(player) if player is not None else None
+            if position is not None:
+                x, y = position
                 canvas.create_rectangle(x-5, y-5, x+5, y+5, fill=self.colors["ink"],
-                                        outline=self.colors["entry"], tags=("player",),
+                                        outline=self.colors["entry"], tags=("player", "map-marker"),
                                         width=3 if selected_index["value"] == "player" else 1)
-                canvas.tag_bind("player", "<Button-1>", lambda _event: select_from_plot("player"))
         canvas.bind("<Configure>", draw)
         self.map_draw = draw
         query_trace = query.trace_add("write", lambda *_args: refresh())

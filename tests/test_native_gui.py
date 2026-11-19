@@ -1,4 +1,5 @@
 import json
+import math
 import sys
 import tempfile
 import tkinter as tk
@@ -775,6 +776,149 @@ class NativeGuiTests(unittest.TestCase):
                 self.assertEqual(app.filter_var.get(), "")
                 self.assertEqual(app.model.changes(), {})
                 self.assertEqual(path.read_bytes(), original)
+            finally:
+                app.destroy()
+
+    def test_map_zoom_centers_preserves_selection_and_fits_after_resize(self):
+        data = json.loads(synthetic_save())
+        items = data["newGOArray_Items"]["value"]["array"]
+        items[0]["components"][0]["localPosition"] = {"x": 20, "y": 0, "z": 20}
+        items[1]["components"][0].update(parent=None, localPosition={"x": 12, "y": 0, "z": 20})
+        items[2]["components"][0].update(parent=None, localPosition={"x": 14, "y": 0, "z": 20})
+        items[3]["components"][0].update(parent=None, localPosition={"x": 100, "y": 0, "z": 20})
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "SaveGame1.es3"
+            original = json.dumps(data).encode("utf-8")
+            path.write_bytes(original)
+            app = EditorGUI(root / "settings.json", root / "legacy", startup_path=path, discover_latest=False)
+            app.attributes("-alpha", 0.0)
+            try:
+                app.update()
+                app.show_task("Item Map")
+                app.update()
+                canvas = app.map_canvas
+                tree = self.descendant(app.task_frame, "Treeview")
+
+                def center(tag):
+                    left, top, right, bottom = canvas.coords(tag)
+                    return ((left + right) / 2, (top + bottom) / 2)
+
+                def spacing():
+                    return math.dist(center("item1"), center("item2"))
+
+                def assert_centered(tag):
+                    self.assertEqual(center(tag), (canvas.winfo_width() / 2, canvas.winfo_height() / 2))
+
+                full_spacing = spacing()
+                search = self.descendant(app.task_frame, "TEntry")
+                search.insert(0, "child")
+                tree.selection_set("1")
+                app.update()
+                self.button(app, "Zoom in").invoke()
+                assert_centered("item1")
+                self.assertAlmostEqual(spacing(), 2 * full_spacing)
+                self.button(app, "Zoom out").invoke()
+                self.assertAlmostEqual(spacing(), full_spacing)
+                self.button(app, "Zoom to player").invoke()
+                assert_centered("player")
+                self.assertAlmostEqual(spacing(), 8 * full_spacing)
+                self.assertFalse(canvas.coords("item3"))
+                self.assertEqual(tree.get_children(), ("1",))
+                self.assertEqual(tree.selection(), ("1",))
+                self.assertEqual(float(canvas.itemcget("item1", "width")), 3)
+                app.geometry("1100x680")
+                app.dark_var.set(True)
+                app.set_appearance()
+                app.change_font(20)
+                app.update()
+                assert_centered("player")
+                self.button(app, "Fit map").invoke()
+                self.assertTrue(canvas.coords("item3"))
+                self.assertEqual(tree.selection(), ("1",))
+                self.assertEqual(app.model.changes(), {})
+                self.assertEqual(path.read_bytes(), original)
+            finally:
+                app.destroy()
+
+    def test_map_zoom_handles_missing_coincident_and_extreme_positions(self):
+        for case in ("missing", "coincident", "extreme"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                data = json.loads(synthetic_save())
+                items = data["newGOArray_Items"]["value"]["array"]
+                player = data["Player"]["value"]["objs"]["Player"]["components"][0]
+                if case == "missing":
+                    del player["localPosition"]
+                    items.clear()
+                else:
+                    x = 1.7e308
+                    player["localPosition"] = {"x": x, "y": 0, "z": 0}
+                    items[:] = items[:1]
+                    items[0]["components"][0]["localPosition"] = {
+                        "x": -x if case == "extreme" else x, "y": 0, "z": 0,
+                    }
+                root = Path(directory)
+                path = root / "SaveGame1.es3"
+                path.write_text(json.dumps(data), encoding="utf-8")
+                app = EditorGUI(root / "settings.json", root / "legacy", startup_path=path, discover_latest=False)
+                app.attributes("-alpha", 0.0)
+                try:
+                    app.update()
+                    app.show_task("Item Map")
+                    app.update()
+                    canvas = app.map_canvas
+                    zoom_in = self.button(app, "Zoom in")
+                    focus_player = self.button(app, "Zoom to player")
+                    content = canvas.master.master.master
+                    summary = next(w.cget("text") for w in content.grid_slaves(row=0))
+                    if case == "missing":
+                        self.assertIn("Player position unresolved; zoom unavailable.", summary)
+                        self.assertTrue(focus_player.instate(["disabled"]))
+                        self.assertTrue(zoom_in.instate(["disabled"]))
+                        continue
+                    self.assertIn("1 items resolved; 0 unresolved.", summary)
+                    self.assertTrue(canvas.coords("item0"))
+                    self.assertTrue(canvas.coords("player"))
+                    focus_player.invoke()
+                    for _ in range(10):
+                        zoom_in.invoke()
+                    self.assertTrue(zoom_in.instate(["disabled"]))
+                    left, top, right, bottom = canvas.coords("player")
+                    self.assertEqual((left + right, top + bottom), (canvas.winfo_width(), canvas.winfo_height()))
+                    self.assertEqual(bool(canvas.coords("item0")), case == "coincident")
+                    self.button(app, "Fit map").invoke()
+                    self.assertTrue(canvas.coords("item0"))
+                    self.assertTrue(all(math.isfinite(coord) for item in canvas.find_all()
+                                        for coord in canvas.coords(item)))
+                finally:
+                    app.destroy()
+
+    def test_map_remains_scrollable_at_large_text_and_small_windows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "SaveGame1.es3"
+            path.write_text(synthetic_save(), encoding="utf-8")
+            app = EditorGUI(root / "settings.json", root / "legacy", startup_path=path, discover_latest=False)
+            app.attributes("-alpha", 0.0)
+            try:
+                app.update()
+                app._base_font_sizes["TkDefaultFont"] = 16
+                app.show_task("Item Map")
+                for geometry, text_size in (("1280x720", 100), ("720x480", 80), ("720x480", 140)):
+                    with self.subTest(geometry=geometry, text_size=text_size):
+                        app.geometry(geometry)
+                        app.settings["fontSize"] = text_size
+                        app._theme()
+                        app.update()
+                        app.outer_canvas.yview_moveto(1)
+                        app.update()
+                        tree = self.descendant(app.task_frame, "Treeview")
+                        self.assertLess(app.outer_canvas.yview()[0], app.outer_canvas.yview()[1])
+                        self.assertEqual(app.outer_canvas.yview()[1], 1)
+                        self.assertGreaterEqual(app.map_canvas.winfo_height(), 300)
+                        self.assertTrue(tree.bbox(tree.get_children()[0]))
+                        button = self.button(app, "Zoom to player")
+                        self.assertGreaterEqual(button.winfo_width(), button.winfo_reqwidth())
             finally:
                 app.destroy()
 
