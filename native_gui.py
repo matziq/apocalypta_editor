@@ -18,6 +18,11 @@ from es3_parser import at
 from native_theme import THEME_LABELS, apply as apply_theme
 
 
+def game_save_folder() -> Path:
+    profile = os.environ.get("USERPROFILE") or str(Path.home())
+    return Path(profile) / "AppData" / "LocalLow" / "SawyerK Games" / "Apocalypter"
+
+
 class ToolTip:
     def __init__(self, widget, text):
         self.widget, self.text, self.window, self.timer = widget, text, None, None
@@ -323,13 +328,16 @@ class EditorGUI(tk.Tk):
         return messagebox.askyesno("Discard drafts?", "Discard unsaved or invalid drafts?", parent=self, default="no")
 
     def browse(self):
+        folder = game_save_folder()
+        location = {"initialdir": str(folder)} if folder.is_dir() else {}
         path = filedialog.askopenfilename(parent=self, title="Open Apocalypter save",
-                                          filetypes=[("Apocalypter saves", "*.es3"), ("All files", "*.*")])
+                                          filetypes=[("Apocalypter saves", "*.es3"), ("All files", "*.*")],
+                                          **location)
         if path:
             self.open_path(Path(path))
 
     def load_latest(self):
-        folder = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "AppData" / "LocalLow" / "SawyerK Games" / "Apocalypter"
+        folder = game_save_folder()
         if not folder.is_dir():
             self.status_var.set("No Apocalypter save folder found. Choose a file manually.")
             return

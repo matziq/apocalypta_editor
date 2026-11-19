@@ -1,5 +1,6 @@
 import json
 import math
+import os
 import sys
 import tempfile
 import tkinter as tk
@@ -150,6 +151,24 @@ class NativeGuiTests(unittest.TestCase):
                     app.update()
                     self.assertEqual(app.active_task, task)
                 self.assertEqual(app.storage.settings()["fontSize"], 90)
+            finally:
+                app.destroy()
+
+    def test_browse_starts_in_game_save_folder_when_present(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            folder = root / "AppData" / "LocalLow" / "SawyerK Games" / "Apocalypter"
+            app = EditorGUI(root / "settings.json", root / "legacy", discover_latest=False)
+            app.withdraw()
+            try:
+                with patch.dict(os.environ, {"USERPROFILE": str(root)}), \
+                        patch("native_gui.filedialog.askopenfilename", return_value="") as dialog:
+                    app.browse()
+                    self.assertNotIn("initialdir", dialog.call_args.kwargs)
+                    folder.mkdir(parents=True)
+                    app.browse()
+                    self.assertEqual(dialog.call_args.kwargs["initialdir"], str(folder))
+                    self.assertIsNone(app.model)
             finally:
                 app.destroy()
 

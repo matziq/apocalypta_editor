@@ -5,7 +5,7 @@ A native Windows editor for Apocalypter's text-based Easy Save 3 / ES3PlayMaker 
 ## Quick start (standalone)
 
 1. Close Apocalypter and download `ApocalypterSaveEditor.exe` from the v2.0.3 or later GitHub release. No Python or browser is needed.
-2. Start the exe. It opens the newest numbered `SaveGameN.es3` in `%USERPROFILE%\AppData\LocalLow\SawyerK Games\Apocalypter`, or use **Browse...** to choose a slot or `SaveSettings.es3`. Autoload excludes settings, backups, and exported copies.
+2. Start the exe. It opens the newest numbered `SaveGameN.es3` in `%USERPROFILE%\AppData\LocalLow\SawyerK Games\Apocalypter`. **Browse...** starts in that same folder when it exists; use it to choose a slot or `SaveSettings.es3`. Autoload excludes settings, backups, and exported copies.
 3. Choose a task, select a row, and edit its supported values. Hover over controls or rows for help; use **Quick start help** for a short walkthrough.
 4. Choose **Save changes**, check the displayed destination, and confirm the overwrite. Alternatively, explicitly enable **Autosave on change** or use **More actions** to review, reset, or export drafts. Exports require a new filename and never replace an existing file.
 
