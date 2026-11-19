@@ -16,6 +16,8 @@ from test_es3_items import fixture
 from test_es3_scalars import GAME
 from test_es3_vehicles import synthetic_vehicle_save
 from test_es3_world import synthetic_save
+from test_native_storage import SLOT_SETTINGS
+from windows_file_safety import replace_file
 
 
 class NativeGuiTests(unittest.TestCase):
@@ -334,6 +336,46 @@ class NativeGuiTests(unittest.TestCase):
                self.assertIsNone(app.pending_autosave)
             finally:
                app.destroy()
+
+    def test_slot_date_replacement_failure_reports_saved_slot_and_preserves_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "SaveGame1.es3"
+            original = GAME.encode("utf-8")
+            path.write_bytes(original)
+            settings = root / "SaveSettings.es3"
+            settings.write_bytes(SLOT_SETTINGS)
+            app = EditorGUI(root / "settings.json", root / "legacy", startup_path=path, discover_latest=False)
+            app.withdraw()
+            try:
+                app.update()
+                app.model.stage("Player.Health", "75")
+                for edited, name in ((True, "SaveGame10.es3"), (False, "SaveGame11.es3")):
+                    export = root / name
+                    with patch("native_gui.filedialog.asksaveasfilename", return_value=str(export)):
+                        app.export_copy(edited=edited)
+                    self.assertTrue(export.is_file())
+                    self.assertEqual(settings.read_bytes(), SLOT_SETTINGS)
+                    self.assertEqual(list(root.glob("SaveSettings.es3.*.original.bak")), [])
+                    self.assertEqual(path.read_bytes(), original)
+
+                def replace(temporary, destination):
+                    if destination == settings:
+                        self.assertIn(b'"float"75', path.read_bytes())
+                        raise OSError("synthetic settings replacement failure")
+                    replace_file(temporary, destination)
+
+                with patch("native_storage.replace_file", side_effect=replace), \
+                        patch("native_gui.messagebox.askyesno", return_value=True):
+                    self.assertTrue(app.save())
+                self.assertEqual(app.model.changes(), {})
+                self.assertIn("Saved changes. Load-menu date not updated:", app.status_var.get())
+                self.assertIn("synthetic settings replacement failure", app.status_var.get())
+                self.assertEqual(settings.read_bytes(), SLOT_SETTINGS)
+                self.assertEqual([backup.read_bytes() for backup in
+                                  root.glob("SaveSettings.es3.*.original.bak")], [SLOT_SETTINGS])
+            finally:
+                app.destroy()
 
     def test_autosave_failure_stops_retries_until_reenabled(self):
         with tempfile.TemporaryDirectory() as directory:
