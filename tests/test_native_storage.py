@@ -1,13 +1,20 @@
+import os
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
 
-from native_storage import _retain, open_source, save_source, set_backup_limit
+from native_storage import _retain, open_source, save_source, set_backup_limit, update_slot_timestamp
 from storage_primitives import list_backups
 
 SAVE = b'{"FOV":{"__type":"float","value":60},"peacefulMode":{"__type":"bool","value":false}}'
+SLOT_SETTINGS = (
+    b'\xef\xbb\xbf{\r\n "saveTime1" : {"__type":"string","value":"01\\/02\\/2025 03:04"},\r\n'
+    b' "saveTime10":{"__type":"string","value":"05\\/06\\/2025 07:08"},\r\n'
+    b' "unknown":"caf\xc3\xa9", "FOV":{"__type":"float","value":60}\r\n}\r\n'
+)
 
 
 class NativeStorageTests(unittest.TestCase):
@@ -40,6 +47,63 @@ class NativeStorageTests(unittest.TestCase):
         self.assertEqual(source.load_backup.read_bytes(), second)
         self.assertEqual(len(list_backups(self.path)), 1)
         self.assertFalse(recovery.exists())
+
+    def test_slot_date_uses_local_file_time_and_only_replaces_the_matching_value(self):
+        settings = self.path.with_name("SaveSettings.es3")
+        for name, old in (("SaveGame1.es3", b"01\\/02\\/2025 03:04"),
+                          ("SaveGame10.es3", b"05\\/06\\/2025 07:08")):
+            with self.subTest(name=name):
+                slot = self.path.with_name(name)
+                slot.write_bytes(SAVE)
+                settings.write_bytes(SLOT_SETTINGS)
+                stamp = datetime(2026, 11, 19, 5, 50, 40).timestamp()
+                os.utime(slot, (stamp, stamp))
+                self.assertEqual(update_slot_timestamp(slot, 3), "")
+                self.assertEqual(settings.read_bytes(), SLOT_SETTINGS.replace(old, b"19\\/11\\/2026 05:50"))
+                self.assertTrue(any(backup.read_bytes() == SLOT_SETTINGS for backup, _, _ in list_backups(settings)))
+                self.assertEqual(slot.read_bytes(), SAVE)
+
+    def test_slot_save_and_autosave_update_settings_without_editing_other_keys(self):
+        settings = self.path.with_name("SaveSettings.es3")
+        previous = datetime(2025, 2, 1, 3, 4).timestamp()
+        os.utime(self.path, (previous, previous))
+        source = open_source(self.path, 3)
+        for automatic, fov in ((False, 70), (True, 80)):
+            with self.subTest(automatic=automatic):
+                settings.write_bytes(SLOT_SETTINGS)
+                result = save_source(source, {"FOV": fov}, confirmed=True, autosave=automatic, backup_limit=3)
+                self.assertTrue(result["saved"])
+                self.assertEqual(result["slotDateWarning"], "")
+                local = datetime.fromtimestamp(self.path.stat().st_mtime_ns // 1_000_000_000)
+                self.assertGreater(local, datetime.fromtimestamp(previous))
+                expected = local.strftime("%d/%m/%Y %H:%M").replace("/", r"\/").encode()
+                self.assertEqual(settings.read_bytes(), SLOT_SETTINGS.replace(b"01\\/02\\/2025 03:04", expected))
+
+    def test_slot_date_failure_is_nonfatal_and_does_not_create_or_edit_settings(self):
+        settings = self.path.with_name("SaveSettings.es3")
+        source = open_source(self.path, 3)
+        for index, content in enumerate((None, SAVE, b"{broken",
+                                        b'{"saveTime1":{"__type":"string""old","value":"other"}}')):
+            with self.subTest(content=content):
+                if content is not None:
+                    settings.write_bytes(content)
+                result = save_source(source, {"FOV": 70 + index}, confirmed=True,
+                                     autosave=False, backup_limit=3)
+                self.assertTrue(result["saved"])
+                self.assertIn("Load-menu date not updated:", result["slotDateWarning"])
+                if content is None:
+                    self.assertFalse(settings.exists())
+                else:
+                    self.assertEqual(settings.read_bytes(), content)
+                self.assertEqual(list_backups(settings), [])
+
+    def test_saving_settings_does_not_change_slot_dates(self):
+        settings = self.path.with_name("SaveSettings.es3")
+        settings.write_bytes(SLOT_SETTINGS)
+        source = open_source(settings, 3)
+        result = save_source(source, {"FOV": 70}, confirmed=True, autosave=False, backup_limit=3)
+        self.assertEqual(result["slotDateWarning"], "")
+        self.assertEqual(settings.read_bytes(), SLOT_SETTINGS.replace(b'"value":60', b'"value":70'))
 
     def test_zero_disables_backups_and_cancel_does_not_save(self):
         source = open_source(self.path, 3)

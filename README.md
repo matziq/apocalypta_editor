@@ -4,12 +4,14 @@ A native Windows editor for Apocalypter's text-based Easy Save 3 / ES3PlayMaker 
 
 ## Quick start (standalone)
 
-1. Close Apocalypter and download `ApocalypterSaveEditor.exe` from the v2.0.3 or later GitHub release. No Python or browser is needed.
+1. Close Apocalypter and download `ApocalypterSaveEditor.exe` from the v2.0.4 or later GitHub release. No Python or browser is needed.
 2. Start the exe. It opens the newest numbered `SaveGameN.es3` in `%USERPROFILE%\AppData\LocalLow\SawyerK Games\Apocalypter`. **Browse...** starts in that same folder when it exists; use it to choose a slot or `SaveSettings.es3`. Autoload excludes settings, backups, and exported copies.
 3. Choose a task, select a row, and edit its supported values. Hover over controls or rows for help; use **Quick start help** for a short walkthrough.
 4. Choose **Save changes**, check the displayed destination, and confirm the overwrite. Alternatively, explicitly enable **Autosave on change** or use **More actions** to review, reset, or export drafts. Exports require a new filename and never replace an existing file.
 
 Keep the game closed while editing. Verify the result in the game after making your own independent backup. The editor does not launch or modify the game.
+
+When you save or autosave a numbered slot, the editor also updates its Load-menu date in the sibling `SaveSettings.es3` using the slot's local modification time. The editor backs up the settings file under the same retention limit before changing the date, unless backups are disabled. If the file or date field is missing or unsupported, the slot still saves and the status bar reports that the menu date could not be updated. Exports do not change the date.
 
 The exe is unsigned, so Windows SmartScreen may warn. Choose **More info**, then **Run anyway**, or run from source with `run.bat`.
 
@@ -103,7 +105,7 @@ The survival values are the actual global scalars, not `Player.SanityAdd`/`Sanit
 
 Additional driving/graphics toggles were traced to their individual `SaveSettings.es3` Load/Save and UI FSMs. Editing one changes only its explicit top-level settings key; similarly named copies under a slot's `global` wrapper are not synchronized or substituted. Driving copies are displayed read-only in a game slot with instructions to edit the settings file. This is not a promise that duplicate scopes are interchangeable.
 
-Object creation/deletion, ownership transfers, transforms, sanity triggers, save timestamps, and unverified settings remain untouched. Increasing a quantity changes only an existing saved stack; it does not create an item or infer that the object is carried.
+Object creation/deletion, ownership transfers, transforms, sanity triggers, and unverified settings remain untouched. Increasing a quantity changes only an existing saved stack; it does not create an item or infer that the object is carried.
 
 The **Saved Items** view lists all existing item objects saved in `newGOArray_Items`, including inactive objects, loose engines, spare parts, supplies, and objects with unknown containers. Filter by saved name, instance reference, or location, then select an item in the table. The adjacent inspector shows its saved identity, available transform details, supported fields, capacity evidence, and read-only reasons.
 

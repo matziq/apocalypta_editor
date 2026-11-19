@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from contextlib import nullcontext
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from es3_document import inspect_document, serialize_document
+from es3_parser import MAX_BYTES, at, parse
 from storage_primitives import create_verified_backup, digest, list_backups, read_bounded
 from windows_file_safety import delete_unchanged, fingerprint, hold_unchanged, replace_file
 
@@ -143,6 +146,53 @@ def save_source(source: Source, changes: dict, *, confirmed: bool, autosave: boo
               else _recovery_point(source.path, original))
     if backup is not None and backup != source.load_backup:
         source.load_backup, source.load_hash, source.load_length = backup, source.hash, len(original)
+    _replace_content(source, edited, backup)
+    source.retention_warning = _retain(source)
+    date_warning = ""
+    try:
+        date_warning = update_slot_timestamp(source.path, limit)
+    except (OSError, ValueError, OverflowError) as exc:
+        date_warning = f"Load-menu date not updated: {exc}"
+    return {"canceled": False, "saved": True, "backupPath": backup,
+            "backupLimit": limit, "retentionWarning": source.retention_warning,
+            "slotDateWarning": date_warning}
+
+
+def update_slot_timestamp(slot: Path, backup_limit: int, *, prune: bool = True) -> str:
+    """Update an existing Load-menu date under the caller's policy lock."""
+    match = re.fullmatch(r"SaveGame([0-9]+)\.es3", slot.name, re.IGNORECASE)
+    if match is None:
+        return ""
+    limit = _limit(backup_limit)
+    key = "saveTime" + (match[1].lstrip("0") or "0")
+    path = slot.with_name("SaveSettings.es3")
+    if fingerprint(path) is None:
+        raise ValueError("SaveSettings.es3 is not a regular single-link file.")
+    content = read_bounded(path)
+    text = content.decode("utf-8")
+    record = at(parse(text), key)
+    declared, value = at(record, "__type"), at(record, "value")
+    if (declared is None or declared.kind != "string" or declared.value != "string"
+            or value is None or value.kind != "string" or record.implicit is not None):
+        raise ValueError(f"SaveSettings.es3 has no supported {key} string.")
+    stat = slot.stat()
+    local = datetime.fromtimestamp(stat.st_mtime_ns // 1_000_000_000)
+    token = '"' + local.strftime("%d/%m/%Y %H:%M").replace("/", r"\/") + '"'
+    if text[value.start:value.end] == token:
+        return ""
+    edited = (text[:value.start] + token + text[value.end:]).encode("utf-8")
+    if len(edited) > MAX_BYTES:
+        raise ValueError("Edited SaveSettings.es3 exceeds the 20 MiB limit.")
+    backup = _recovery_point(path, content) if limit else None
+    expected_hash = digest(content)
+    source = Source(path, content, expected_hash, limit, backup,
+                    expected_hash if backup else None, len(content) if backup else 0)
+    _replace_content(source, edited, backup)
+    warning = _retain(source) if prune else ""
+    return f"Load-menu date updated, but its backup cleanup is incomplete: {warning}" if warning else ""
+
+
+def _replace_content(source: Source, edited: bytes, backup: Path | None) -> None:
     temporary = source.path.parent / f".apocalypter-{uuid.uuid4().hex}.tmp"
     created = False
     try:
@@ -162,10 +212,7 @@ def save_source(source: Source, changes: dict, *, confirmed: bool, autosave: boo
             source.content = edited
     except OSError as exc:
         recovery = f"Backup retained at {backup}." if backup else "Backups are disabled; no recovery copy was created."
-        raise OSError(f"Could not replace the save. {recovery}") from exc
+        raise OSError(f"Could not replace the save: {exc} {recovery}") from exc
     finally:
         if created and temporary.exists():
             temporary.unlink()
-    source.retention_warning = _retain(source)
-    return {"canceled": False, "saved": True, "backupPath": backup,
-            "backupLimit": limit, "retentionWarning": source.retention_warning}

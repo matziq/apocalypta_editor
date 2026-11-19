@@ -427,12 +427,14 @@ class EditorGUI(tk.Tk):
             self.uncommitted.clear()
             self._sync_tree_values()
             warning = result["retentionWarning"]
+            date_warning = result.get("slotDateWarning", "")
             if warning:
                 self.autosave_failed = True
-                self.status_var.set(f"Save succeeded, but backup cleanup is incomplete: {warning} "
-                                    "Resolve it, then turn autosave off and on to retry.")
+                status = (f"Save succeeded, but backup cleanup is incomplete: {warning} "
+                          "Resolve it, then turn autosave off and on to retry.")
             else:
-                self.status_var.set("Autosaved changes." if automatic else "Saved changes.")
+                status = "Autosaved changes." if automatic else "Saved changes."
+            self.status_var.set(f"{status} {date_warning}" if date_warning else status)
             return True
         except (OSError, UnicodeError, ValueError) as exc:
             if automatic:
