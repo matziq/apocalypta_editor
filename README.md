@@ -1,23 +1,18 @@
-# Apocalypter Save Editor
+# Apocalypta Save Editor
 
-An offline editor for the **actual text-based Easy Save 3 / ES3PlayMaker format** used by Apocalypter. On Windows, double-click `run.bat` to start the local picker bridge and open the editor in your default browser. The picker uses built-in Windows PowerShell and Windows Forms. Saving changes back to the original additionally requires Node.js 18+ to validate edits using the same lossless parser as the UI; there are no npm dependencies. Alternatively, open `index.html` directly in a current desktop browser for export-only editing.
+An offline Windows Tkinter editor for the **actual text-based Easy Save 3 / ES3PlayMaker format** used by Apocalypter. Double-click `run.bat` or launch **Apocalypta Editor** from the local Tools Menu. The launcher starts `native_gui.py` using Python 3.12 when available, then falls back to another `py -3` installation or `python`. Python 3 is required; Node.js is not.
 
-The local Tools Menu discovers `run.bat` automatically under **Game Editors** as **Apocalypta Editor** (the display name comes from the repository folder). Refresh the menu's tool list if it was already open when the launcher was added. The launcher works from any working directory, including paths containing spaces.
+The Tools Menu discovers tools by finding `run.bat` in each immediate subfolder of **Game Editors**. Refresh the menu's tool list if it was already open before the launcher was added. `run.bat` works from any current directory and with spaces in the editor's path.
 
 ## Use
 
 1. Close Apocalypter and back up your saves.
-2. Launch **Apocalypta Editor** from the Tools Menu or double-click `run.bat`. Click **Choose File** to open the current Windows user's `%USERPROFILE%\AppData\LocalLow\SawyerK Games\Apocalypter` folder. Choose `SaveGame1.es3` (or another slot) or `SaveSettings.es3`.
-3. Optionally use **Download original backup** to preserve the exact opened bytes.
-4. Edit supported fields and review the before/after list. Invalid values block saving and export.
-5. For a native-opened file, choose **Save changes**, check the exact destination in the confirmation, and confirm replacement. A unique backup of the current original is mandatory before the original filename is replaced; no manual renaming is needed. Cancel makes no writes.
-6. Or choose **Export edited copy** to download a separate `.edited.es3` file. Browser-opened files support only this option; with the game closed, manually copy an exported file to the original filename after backing up that original.
+2. Launch **Apocalypta Editor** from the Tools Menu or double-click `run.bat`. Use **Browse...** to choose a save, or **Load newest** to open the most recently modified save from the current Windows user's `%USERPROFILE%\AppData\LocalLow\SawyerK Games\Apocalypter` folder.
+3. Choose a task: **Player & Supplies**, **Vehicles**, **Saved Items**, **Item Map**, or **Settings**. Select a field, vehicle, or saved item to review and edit supported values. Bulk actions and targets are available where applicable.
+4. Choose **Save changes** and confirm the overwrite, or enable **Autosave on change**. You can also use **More actions** to export an edited or original copy. Canceling a save/export does not write the source.
+5. Keep Apocalypter closed while editing. Verify changes in-game only after preserving a backup.
 
-The Windows launcher reads the current user's save folder (not a hardcoded account path). If that folder does not exist, the editor reports its full expected path. The local PowerShell bridge listens only on `127.0.0.1`, uses a per-launch random token and exact Host/Origin checks, serves only its fixed editor assets, and accepts only a user-selected `.es3` file up to 20 MiB. Confirmed writes are bound server-side to an opaque handle issued for the native-opened file; client-supplied destination paths are rejected. It does not expose arbitrary file reads, writes, or command execution. Close the picker bridge window when finished; it also stops after an hour without requests. It normally uses port 58643 so browser preferences persist across launches; if that port is occupied it uses another available port, whose browser preferences are separate.
-
-When opening `index.html` directly instead of using `run.bat`, only **Browser picker (folder not controlled)** is available. Its folder is controlled by the browser and may start at your Windows profile root; navigate to the save folder yourself. The working native launch shows **only the native Choose File button**, not a second browser chooser. The explicitly limited browser fallback appears only if the native connection fails. It is not evidence that the native picker worked. Canceling either chooser leaves the open save and its drafts unchanged.
-
-The native dialog is titled **Choose an Apocalypter save**. It uses the classic Windows file dialog with an explicit initial directory on every opening, avoiding the modern shell dialog's remembered location. It is owned by a visible, topmost **Apocalypter Save Editor - file selection** window so it is discoverable rather than hidden behind the browser. The button first checks the authenticated bridge connection; a stopped, outdated, or unresponsive bridge produces instructions within five seconds instead of waiting indefinitely. Check the taskbar for an already open dialog before relaunching: this small single-threaded bridge waits for selection or cancellation while its dialog is active. After updating or relaunching, use the **newly opened browser URL**, not an old tab: a stale tab cannot restart its old bridge.
+The editor uses native Windows file dialogs and reads the selected `.es3` file directly. If the default save folder is missing, browse to the save location yourself. Appearance, font size, autosave, and editing preferences are stored locally in `editor_settings.json`; that per-user file is not tracked by Git.
 
 Default Windows saves:
 
@@ -25,15 +20,11 @@ Default Windows saves:
 %USERPROFILE%\AppData\LocalLow\SawyerK Games\Apocalypter
 ```
 
-The game's installation folder is not the save folder. Do not copy edited files into `Apocalypter_Data`. Browser downloads go to your browser's configured download location; choose a different location in its save dialog if needed.
+The game's installation folder is not the save folder. Do not copy edited files into `Apocalypter_Data`. When exporting a copy, choose a separate destination rather than overwriting the original save.
 
-## Confirmed saves and automatic backups
+## Saves and backups
 
-Every **Save changes** operation validates the proposed scalar edits again on the server and checks the original's SHA-256 against the version opened or last saved by this editor. An external change causes refusal: reopen the current file instead of overwriting another program's work. Close the game while editing.
-
-Backups are stored **beside the selected original**, named like `SaveGame1.es3.20261111T133000123Z.<unique-id>.original.bak`. Each contains the exact bytes immediately before that save. Repeated saves create new backups without replacing older ones. A failed backup aborts saving; a failed replacement retains the backup and reports its path.
-
-After backing up, the bridge writes and flushes a uniquely named temporary file in the same directory, checks the original again, then uses Windows atomic file replacement. A filesystem that cannot support that operation causes an explicit error rather than a non-atomic fallback. After success, the editor adopts the saved bytes as its new baseline and clears the pending changes. If a connection fails after the server may have written, reopen the source to check its current state before retrying.
+Before replacing a save, the editor creates a unique backup beside the selected original. It verifies the file has not changed since opening and uses a temporary file plus Windows replacement operations to avoid silently overwriting external edits. A failed backup or replacement is reported and does not silently fall back to an unsafe write. After a successful save, the editor adopts the saved content as its new baseline and clears pending edits. Exporting writes a separate copy and leaves the original unchanged.
 
 ## Appearance and vehicle actions
 
@@ -107,21 +98,18 @@ PlayMaker data uses a nonstandard inline value, for example:
 {"Health":{"__type":"float"100}}
 ```
 
-**Do not run the game save through JSON.parse / JSON.stringify.** The parser understands both formats and records exact scalar source spans. Serialization replaces only edited numeric or boolean tokens, preserving unknown content, 64-bit reference literals, ordering, whitespace, line endings, escapes, and a UTF-8 BOM. A no-change roundtrip returns identical text; backup download uses the exact original bytes.
+**Do not run the game save through JSON.parse / JSON.stringify.** The parser understands both formats and records exact scalar source spans. Serialization replaces only edited numeric or boolean tokens, preserving unknown content, 64-bit reference literals, ordering, whitespace, line endings, escapes, and a UTF-8 BOM. A no-change roundtrip returns identical text; backups preserve the exact original bytes.
 
-Only UTF-8 text up to 20 MiB is accepted. Invalid UTF-8, encrypted/binary data, duplicate keys, malformed syntax, excessive nesting, unknown files, and incompatible recognized field types are rejected explicitly. Opening, editing, and exporting do not write to the source; only confirmed native **Save changes** writes it after the mandatory backup. Reloading closes the document; the browser warns about pending changes.
+Only UTF-8 text up to 20 MiB is accepted. Invalid UTF-8, encrypted/binary data, duplicate keys, malformed syntax, excessive nesting, unknown files, and incompatible recognized field types are rejected explicitly. Opening, editing, and exporting do not write to the source; only confirmed native **Save changes** writes it after the mandatory backup. Closing or opening another file with pending edits requires the editor to resolve those changes first.
 
 ## Development
 
-Node.js 18+ is needed for tests and native in-place save validation; the native picker and export-only editor work without it. Windows-only launcher and atomic-save tests run under Windows PowerShell and are skipped elsewhere. There are no npm dependencies.
+Python 3.12 is the preferred runtime. Run the tests from the repository root with:
 
 ```powershell
-npm test
-npm run check
+python -m unittest discover tests
 ```
 
-`APOCALYPTER_TEST_OUTPUT` can specify the directory for disposable synthetic write-test files (otherwise the OS temporary directory is used). The tests never write to actual game saves.
-
-`save-format.js` contains the parser, verified field allowlist, validation, and lossless serializer. `app.js`, `index.html`, and `style.css` provide the offline UI. `tests\save-format.test.js` contains small synthetic fixtures matching the observed syntax; no user's save or proprietary game assets are included.
+The tests use synthetic fixtures and temporary files; they do not write to actual game saves. The Windows launcher tests are skipped on non-Windows platforms. `build_exe.ps1` builds a standalone executable with the optional dependencies in `requirements-build.txt`.
 
 Game-load compatibility still requires a manual load in Apocalypter after making a backup; the editor does not launch or modify the game.
