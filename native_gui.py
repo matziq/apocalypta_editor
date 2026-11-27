@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import math
 import os
+import re
 import sys
 import tkinter as tk
 from pathlib import Path
@@ -21,6 +22,45 @@ from native_theme import THEME_LABELS, apply as apply_theme
 def game_save_folder() -> Path:
     profile = os.environ.get("USERPROFILE") or str(Path.home())
     return Path(profile) / "AppData" / "LocalLow" / "SawyerK Games" / "Apocalypter"
+
+
+def map_item_kind(name: str, tag: str = "") -> str:
+    words = set(re.findall(r"[a-z0-9]+", (name + " " + tag).casefold()))
+    if re.search(r"\d+\s*hp\b", name.casefold()):
+        return "part"
+    for kind, keywords in (
+        ("ammo", {"ammo", "ammunition", "arrow", "batteries"}),
+        ("medical", {"bandage", "aid", "medical", "pills"}),
+        ("part", {"engine", "radiator", "wheel", "exhaust", "armor"}),
+        ("liquid", {"water", "gasoline", "diesel", "oil", "liquid"}),
+        ("food", {"food", "dogfood", "meat", "cooked", "lizard", "rat", "scorpion"}),
+        ("weapon", {"weapon", "gun", "rifle", "pistol", "shotgun", "akms", "blastlance"}),
+        ("tool", {"tool", "repairbox", "wrench", "hammer", "flashlight"}),
+    ):
+        if words & keywords:
+            return kind
+    return "other"
+
+
+def map_player_relation(point: dict | None, player: dict | None) -> str:
+    if player is None:
+        return "Distance and direction unavailable: player position unresolved."
+    if point is None:
+        return "Distance and direction unavailable: item position unresolved."
+    scale = max(1.0, *(abs(p[axis]) for p in (point, player) for axis in ("x", "z")))
+    dx, dz = (point[axis] / scale - player[axis] / scale for axis in ("x", "z"))
+    distance = math.hypot(dx, dz) * scale
+    if dx == dz == 0:
+        return "Horizontal distance: 0.00 world units; same X/Z position as player."
+    bearing = math.degrees(math.atan2(dx, dz)) % 360
+    directions = ("+Z (up)", "+X / +Z (upper right)", "+X (right)",
+                  "+X / -Z (lower right)", "-Z (down)", "-X / -Z (lower left)",
+                  "-X (left)", "-X / +Z (upper left)")
+    direction = directions[int((bearing + 22.5) // 45) % 8]
+    amount = (f"{distance:.2f}" if distance < 1e9 else f"{distance:.3g}"
+              if math.isfinite(distance) else "beyond numeric range")
+    return (f"Horizontal distance: {amount} world units; direction: {direction}; "
+            f"bearing: {bearing:.2f} deg clockwise from +Z (not compass north).")
 
 
 class ToolTip:
@@ -922,6 +962,10 @@ class EditorGUI(tk.Tk):
         ToolTip(search, "Filter the list by saved name, type, tag, or location.")
         ttk.Label(controls, text="Player and player-owned items are highlighted.").grid(
             row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ttk.Label(controls, text="Icons: bullets = ammo; cross = medical; drop = liquids; "
+                  "bowl = food; rifle = weapons; gear = parts; wrench = tools; diamond = other.\n"
+                  "Categories use saved names/tags only. +X right, +Z up; distances are world units.",
+                  wraplength=950).grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
         zoom_bar = ttk.Frame(parent)
         zoom_bar.grid(row=2, column=0, sticky="w", pady=(8, 0))
 
@@ -971,13 +1015,15 @@ class EditorGUI(tk.Tk):
         labels = {}
         selected_index = {"value": None}
         rows = {}
+        kinds = {}
         for index, (item, point) in enumerate(positioned):
             position = f'{point["x"]:.2f} / {point["z"]:.2f}' if point else "Unresolved"
-            distance = (f' | {math.hypot(point["x"] - player["x"], point["z"] - player["z"]):.2f} units from player'
-                        if point and player else "")
             owned = world.belongs_to_player(item.object)
             location = ("Player-owned | " if owned else "") + item.location
-            labels[str(index)] = f"{item.object.name} | {position}{distance} | {location}"
+            labels[str(index)] = (f"{item.object.name} | {position} | {location}\n"
+                                  + map_player_relation(point, player))
+            tag_node = at(item.object.object, "tag")
+            kinds[index] = map_item_kind(item.object.name, str(tag_node.value) if tag_node else "")
             extra = " ".join(str(at(item.object.object, key).value)
                              for key in ("__type", "tag") if at(item.object.object, key) is not None)
             rows[str(index)] = (item.object.name, point, position, location, extra,
@@ -1113,16 +1159,56 @@ class EditorGUI(tk.Tk):
                     continue
                 x, y = position
                 tag = f"item{index}"
-                canvas.create_oval(x-4, y-4, x+4, y+4, fill=self.colors["accent"],
+                canvas.create_oval(x-10, y-10, x+10, y+10, fill=self.colors["entry"],
                                    outline=self.colors["ink"],
                                    width=3 if selected_index["value"] == index else 1,
                                    tags=(tag, "map-marker"))
+                icon_tags = (tag, "map-marker", f"icon-{kinds[index]}")
+
+                def line(*coords):
+                    canvas.create_line(*(value + (x if i % 2 == 0 else y)
+                                         for i, value in enumerate(coords)),
+                                       fill=self.colors["ink"], width=2, tags=icon_tags)
+
+                kind = kinds[index]
+                if kind == "ammo":
+                    for offset in (-3, 3):
+                        line(offset-1, 5, offset-1, -3, offset, -5, offset+1, -3, offset+1, 5)
+                elif kind == "medical":
+                    line(-6, 0, 6, 0)
+                    line(0, -6, 0, 6)
+                elif kind == "liquid":
+                    line(0, -7, -5, 2, -3, 6, 3, 6, 5, 2, 0, -7)
+                elif kind == "food":
+                    line(-6, -2, 6, -2, 3, 5, -3, 5, -6, -2)
+                    line(0, -6, 0, -4)
+                elif kind == "weapon":
+                    line(-7, -2, 7, -2)
+                    line(-7, -2, -7, 3, -3, 0, 3, 0)
+                    line(1, 0, 3, 5)
+                elif kind == "part":
+                    for dx, dy in ((6, 0), (0, 6), (4, 4), (4, -4)):
+                        line(-dx, -dy, dx, dy)
+                    canvas.create_oval(x-3, y-3, x+3, y+3, fill=self.colors["entry"],
+                                       outline=self.colors["ink"], tags=icon_tags)
+                elif kind == "tool":
+                    line(-5, 6, 2, -1, 5, -1, 7, -4, 3, -3, 3, -7, 0, -5, 0, -2, -5, 6)
+                else:
+                    line(0, -6, 6, 0, 0, 6, -6, 0, 0, -6)
             position = screen(player) if player is not None else None
             if position is not None:
                 x, y = position
-                canvas.create_rectangle(x-5, y-5, x+5, y+5, fill=self.colors["ink"],
+                canvas.create_oval(x-16, y-16, x+16, y+16, fill=self.colors["accent"],
                                         outline=self.colors["entry"], tags=("player", "map-marker"),
-                                        width=3 if selected_index["value"] == "player" else 1)
+                                        width=4 if selected_index["value"] == "player" else 3)
+                canvas.create_oval(x-4, y-9, x+4, y-1, fill=self.colors["entry"],
+                                   outline=self.colors["ink"], tags=("player", "map-marker"))
+                canvas.create_line(x, y, x, y+9, x-7, y+12, x, y+9, x+7, y+12,
+                                   fill=self.colors["entry"], width=3, tags=("player", "map-marker"))
+                canvas.create_line(x-8, y+2, x+8, y+2, fill=self.colors["entry"],
+                                   width=3, tags=("player", "map-marker"))
+                canvas.create_text(x, y-24, text="PLAYER", fill=self.colors["ink"],
+                                   font=("TkDefaultFont", 10, "bold"), tags=("player", "map-marker"))
         canvas.bind("<Configure>", draw)
         self.map_draw = draw
         query_trace = query.trace_add("write", lambda *_args: refresh())

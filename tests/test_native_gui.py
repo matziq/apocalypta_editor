@@ -10,7 +10,7 @@ from pathlib import Path
 from tkinter import ttk
 from unittest.mock import patch
 
-from native_gui import EditorGUI, main
+from native_gui import EditorGUI, main, map_item_kind, map_player_relation
 from native_theme import PALETTES, THEME_LABELS
 from test_es3_items import fixture
 from test_es3_scalars import GAME
@@ -21,6 +21,87 @@ from windows_file_safety import replace_file
 
 
 class NativeGuiTests(unittest.TestCase):
+    def test_map_relative_distance_and_axis_bearing(self):
+        player = {"x": 10, "z": 20}
+        for point, distance, direction, bearing in (
+            ({"x": 13, "z": 24}, "5.00", "+X / +Z", "36.87"),
+            ({"x": 10, "z": 15}, "5.00", "-Z (down)", "180.00"),
+            ({"x": 5, "z": 20}, "5.00", "-X (left)", "270.00"),
+        ):
+            relation = map_player_relation(point, player)
+            self.assertIn(distance + " world units", relation)
+            self.assertIn(direction, relation)
+            self.assertIn(bearing + " deg", relation)
+        self.assertIn("same X/Z", map_player_relation(player, player))
+        self.assertIn("player position unresolved", map_player_relation(player, None))
+        self.assertIn("item position unresolved", map_player_relation(None, player))
+        extreme = map_player_relation({"x": 1.7e308, "z": 0}, {"x": -1.7e308, "z": 0})
+        self.assertIn("beyond numeric range", extreme)
+        self.assertIn("90.00 deg", extreme)
+
+    def test_map_icons_and_selection_measurements(self):
+        names = ("ammo_box_22", "first_aid_1", "Water_Can_Plastic", "Lizard_cooked",
+                 "akms(Clone)50", "radiator_medium", "Repairbox_Small", "unknown")
+        kinds = ("ammo", "medical", "liquid", "food", "weapon", "part", "tool", "other")
+        for name, kind in zip(names, kinds):
+            self.assertEqual(map_item_kind(name), kind)
+        self.assertEqual(map_item_kind("3L I5 87HP 172Nm Diesel"), "part")
+        self.assertEqual(map_item_kind("unknown", "Weapon"), "weapon")
+        with tempfile.TemporaryDirectory() as directory:
+            data = json.loads(synthetic_save())
+            items = data["newGOArray_Items"]["value"]["array"]
+            items[:] = items[:1]
+            template = json.loads(json.dumps(items[0]))
+            for index, name in enumerate(names):
+                item = json.loads(json.dumps(template))
+                item.update(name=name, _ES3Ref=f"item{index}", transformID=f"transform{index}")
+                item["components"][0].update(
+                    _ES3Ref=f"transform{index}", goID=f"item{index}", parent=None,
+                    localPosition={"x": 13 + index * 10, "y": 0, "z": 24})
+                if index == 0:
+                    items[0] = item
+                else:
+                    items.append(item)
+            data["Player"]["value"]["objs"]["Player"]["components"][0]["localPosition"] = {
+                "x": 10, "y": 0, "z": 20}
+            root = Path(directory)
+            path = root / "SaveGame1.es3"
+            original = json.dumps(data).encode("utf-8")
+            path.write_bytes(original)
+            app = EditorGUI(root / "settings.json", root / "legacy", startup_path=path, discover_latest=False)
+            app.attributes("-alpha", 0.0)
+            try:
+                app.update()
+                app.show_task("Item Map")
+                app.update()
+                canvas = app.map_canvas
+                for kind in kinds:
+                    self.assertTrue(canvas.find_withtag("icon-" + kind))
+                self.assertTrue(any(canvas.type(item) == "text" and canvas.itemcget(item, "text") == "PLAYER"
+                                    for item in canvas.find_withtag("player")))
+                self.assertGreater(canvas.coords("player")[2] - canvas.coords("player")[0],
+                                   canvas.coords("item0")[2] - canvas.coords("item0")[0])
+                tree = self.descendant(app.task_frame, "Treeview")
+                tree.selection_set("0")
+                app.update()
+                for _ in range(3):
+                    self.button(app, "Zoom in").invoke()
+                tree.selection_set("1")
+                app.update()
+                coords = canvas.coords("item0")
+                canvas.event_generate("<Button-1>", x=int((coords[0] + coords[2]) / 2),
+                                      y=int((coords[1] + coords[3]) / 2))
+                app.update()
+                self.assertEqual(tree.selection(), ("0",))
+                details = canvas.master.master.master.grid_slaves(row=4)[0]
+                self.assertIn("5.00 world units", details.cget("text"))
+                self.assertIn("+X / +Z", details.cget("text"))
+                self.assertIn("36.87 deg", details.cget("text"))
+                self.assertEqual(app.model.changes(), {})
+                self.assertEqual(path.read_bytes(), original)
+            finally:
+                app.destroy()
+
     @staticmethod
     def button(root, text):
         widgets = [root]
