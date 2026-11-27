@@ -1,4 +1,4 @@
-# Apocalypta Save Editor
+# Apocalypter Save Editor
 
 A native Windows editor for Apocalypter's text-based Easy Save 3 / ES3PlayMaker saves. It edits only verified existing values and preserves unrelated save data.
 
