@@ -3,11 +3,9 @@ node_modules/
 *.bak
 *.log
 coverage/
+build/
+dist/
+.venv/
 __pycache__/
 *.py[cod]
-dist/
-build/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
 editor_settings.json
